@@ -1,0 +1,1052 @@
+'use strict';
+
+const TG = require('node-telegram-bot-api');
+
+let userBot  = null;
+let adminBot = null;
+let shopBot  = null;
+const adminChatIds = new Set();
+
+const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
+
+function getMiniAppUrl() {
+  return (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
+}
+
+async function notifyAdminAboutOrder(order) {
+  console.log('[notifyAdminAboutOrder] Called with order:', order.id);
+  console.log('[notifyAdminAboutOrder] adminBot exists:', !!adminBot);
+  console.log('[notifyAdminAboutOrder] adminChatIds:', Array.from(adminChatIds));
+  console.log('[notifyAdminAboutOrder] receipt_url:', order.receipt_url);
+  
+  if (!adminBot) {
+    console.error('[notifyAdminAboutOrder] adminBot is not initialized');
+    return;
+  }
+  
+  if (adminChatIds.size === 0) {
+    console.error('[notifyAdminAboutOrder] No admin chat IDs configured');
+    return;
+  }
+  
+  let items = [];
+  if (Array.isArray(order.items)) {
+    items = order.items;
+  } else if (typeof order.items === 'string' && order.items.trim()) {
+    try {
+      items = JSON.parse(order.items);
+    } catch (e) {
+      console.error('[notifyAdminAboutOrder] items parse error:', e.message, order.items);
+      items = [];
+    }
+  } else if (order.items && typeof order.items === 'object') {
+    items = order.items;
+  }
+  const itemsList = (items || []).map(i => `• ${i.title || i.name || 'Товар'} — ${(Number(i.price)||0).toLocaleString('ru')} сом.`).join('\n');
+  const deliveryLabel = order.delivery_type === 'pickup' ? '🏪 Самовывоз' : '🚕 Такси';
+  const adminUrl = `${getMiniAppUrl()}/#admin`;
+  
+  let message = `🛒 <b>НОВЫЙ ЗАКАЗ #${order.id}</b>\n\n`;
+  message += `📞 Телефон: ${order.customer_phone}\n`;
+  message += `📍 Адрес: ${order.customer_address}\n`;
+  message += `🚚 Доставка: ${deliveryLabel}\n`;
+  message += `💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.\n\n`;
+  message += `<b>Товары:</b>\n${itemsList}\n`;
+  
+  if (order.receiver_name) {
+    message += `\n👤 <b>Получит другой человек:</b>\n`;
+    message += `Имя: ${order.receiver_name}\n`;
+    message += `Телефон: ${order.receiver_phone}\n`;
+    message += `Адрес: ${order.receiver_address}\n`;
+  }
+  
+  message += `\n🔗 <a href="${adminUrl}">Открыть в админ-панели</a>`;
+  
+  const actionsKeyboard = {
+    inline_keyboard: [
+      [
+        { text: '✅ Одобрить заказ', callback_data: `order_confirm:${order.id}` },
+        { text: '❌ Отклонить заказ', callback_data: `order_reject:${order.id}` }
+      ],
+      [
+        { text: '📋 Открыть админ-панель', url: adminUrl }
+      ]
+    ]
+  };
+
+  const options = { parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: actionsKeyboard };
+  
+  // Send to all admin chat IDs
+  for (const chatId of adminChatIds) {
+    try {
+      console.log('[notifyAdminAboutOrder] Sending to chatId:', chatId, 'with photo:', !!order.receipt_url);
+      if (order.receipt_url) {
+        await adminBot.sendPhoto(chatId, order.receipt_url, { caption: message, ...options });
+        console.log('[notifyAdminAboutOrder] Photo sent successfully to:', chatId);
+      } else {
+        await adminBot.sendMessage(chatId, message, options);
+        console.log('[notifyAdminAboutOrder] Message sent successfully to:', chatId);
+      }
+    } catch (err) {
+      console.error('[notifyAdminAboutOrder] Failed to send to chatId:', chatId, err);
+    }
+  }
+}
+
+async function handleOrderCallback(callbackQuery) {
+  if (!adminBot) return;
+  const data = callbackQuery.data || '';
+  const match = data.match(/^(order_confirm|order_reject):(.+)$/);
+  if (!match) return;
+
+  const action = match[1];
+  const orderId = match[2];
+  // Admin "confirm" = payment_confirmed (next step: seller decides)
+  const status = action === 'order_confirm' ? 'payment_confirmed' : 'rejected';
+  const label = status === 'payment_confirmed' ? '✅ Оплата подтверждена — продавец уведомлён' : '❌ Заказ отклонён';
+
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { data: updatedOrder, error } = await db.from('orders').update({ status }).eq('id', orderId).select().single();
+    if (error) throw new Error(error.message);
+
+    await adminBot.answerCallbackQuery(callbackQuery.id, { text: label, show_alert: false });
+    await adminBot.sendMessage(callbackQuery.from.id, `Заказ #${orderId} ${status === 'payment_confirmed' ? 'подтверждён (оплата)' : 'отклонён'}.
+
+📞 ${updatedOrder.customer_phone}
+💰 ${(Number(updatedOrder.total)||0).toLocaleString('ru')} сом.`, { parse_mode: 'HTML' });
+
+    // After payment confirmation, notify seller(s)
+    if (status === 'payment_confirmed') {
+      try {
+        await notifySellerAboutOrder(updatedOrder);
+      } catch (e) {
+        console.error('[handleOrderCallback] Failed to notify seller:', e.message);
+      }
+    }
+
+    if (callbackQuery.message) {
+      const chatId = callbackQuery.message.chat.id;
+      const messageId = callbackQuery.message.message_id;
+      const original = callbackQuery.message.caption || callbackQuery.message.text || '';
+      const newText = `<b>${label}</b>\n\n${original}`;
+      try {
+        if (callbackQuery.message.caption) {
+          await adminBot.editMessageCaption(newText, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'HTML'
+          });
+        } else {
+          await adminBot.editMessageText(newText, {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'HTML'
+          });
+        }
+      } catch (ignore) {}
+    }
+  } catch (err) {
+    console.error('[handleOrderCallback] Error updating order:', err.message);
+    await adminBot.answerCallbackQuery(callbackQuery.id, { text: 'Ошибка при обновлении заказа', show_alert: true });
+  }
+}
+
+
+// Notify the seller (shop) when admin confirms payment
+async function notifySellerAboutOrder(order) {
+  if (!order) return;
+  const bot = shopBot || userBot; // fallback to userBot if shopBot not configured
+  if (!bot) {
+    console.log('[notifySellerAboutOrder] No bot available');
+    return;
+  }
+
+  // Find seller chat IDs from items
+  let items = [];
+  if (typeof order.items === 'string') {
+    try { items = JSON.parse(order.items); } catch (e) { items = []; }
+  } else if (Array.isArray(order.items)) {
+    items = order.items;
+  }
+  const sellerPhones = [...new Set(items.map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
+  if (sellerPhones.length === 0) {
+    console.log('[notifySellerAboutOrder] No seller phones in order', order.id);
+    return;
+  }
+
+  const { createClient } = require('@supabase/supabase-js');
+  const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  const { data: shops } = await db
+    .from('shops')
+    .select('phone, shop_name, telegram_chat_id')
+    .in('phone', sellerPhones);
+
+  const itemsList = items.map(it => `• ${it.title || 'Товар'} ×${it.qty || 1}`).join('\n');
+  const total = (Number(order.total) || 0).toLocaleString('ru');
+
+  const message = `🛒 <b>Новый заказ для вашего магазина!</b>\n\n` +
+    `📦 <b>Товары:</b>\n${itemsList}\n\n` +
+    `💰 <b>Сумма:</b> ${total} сом\n` +
+    `🚚 <b>Доставка:</b> ${order.delivery_type || '—'}\n\n` +
+    `⏳ Контакты клиента откроются после того, как вы примете заказ.`;
+
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '✅ Принять заказ', callback_data: `shop_accept:${order.id}` },
+      { text: '❌ Отклонить',     callback_data: `shop_reject:${order.id}` },
+    ]]
+  };
+
+  for (const shop of (shops || [])) {
+    if (!shop.telegram_chat_id) {
+      console.log('[notifySellerAboutOrder] Shop has no chat_id:', shop.phone, '— send /start to shopBot first');
+      continue;
+    }
+    try {
+      await bot.sendMessage(shop.telegram_chat_id, message, {
+        parse_mode: 'HTML',
+        reply_markup: keyboard
+      });
+      console.log('[notifySellerAboutOrder] Notified shop', shop.phone);
+    } catch (e) {
+      console.error('[notifySellerAboutOrder] Error notifying', shop.phone, ':', e.message);
+    }
+  }
+}
+
+async function notifyAdminAboutShopOrder(order, shop) {
+  if (!adminBot) return;
+  const action = order.status === 'seller_accepted' || order.status === 'confirmed'
+    ? '✅ ПРИНЯЛ ЗАКАЗ'
+    : (order.status === 'rejected' ? '❌ ОТКАЗАЛ В ЗАКАЗЕ' : `🔄 ${order.status.toUpperCase()}`);
+  const shopName = shop.shop_name || shop.phone;
+
+  let message = `🏪 <b>РЕШЕНИЕ МАГАЗИНА</b>\n\n`;
+  message += `<b>Имя магазина:</b> ${shopName}\n`;
+  message += `<b>Номер:</b> ${shop.phone}\n`;
+  message += `<b>Действие:</b> ${action}\n\n`;
+  message += `<b>Заказчик:</b> ${order.customer_phone}\n`;
+  
+  if (order.receiver_name) {
+    message += `<b>Получатель:</b> ${order.receiver_name} (${order.receiver_phone})\n`;
+  }
+  
+  message += `\n💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.`;
+  
+  const options = { parse_mode: 'HTML', disable_web_page_preview: true };
+  
+  for (const chatId of adminChatIds) {
+    await adminBot.sendMessage(chatId, message, options);
+  }
+}
+
+function escHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function getProductCode(num, prefix) {
+  if (!num) return null;
+  return prefix + '-' + String(Number(num)).padStart(4, '0');
+}
+
+function initBots() {
+  if (process.env.ADMIN_CHAT_ID_1) adminChatIds.add(process.env.ADMIN_CHAT_ID_1);
+  if (process.env.ADMIN_CHAT_ID_2) adminChatIds.add(process.env.ADMIN_CHAT_ID_2);
+  if (process.env.ADMIN_CHAT_ID)   adminChatIds.add(process.env.ADMIN_CHAT_ID);
+  initUserBot();
+  initAdminBot();
+  initShopBot();
+}
+
+function initUserBot() {
+  const token = process.env.BOT_TOKEN_USER;
+  if (!token) { console.log('BOT_TOKEN_USER не задан'); return; }
+  userBot = new TG(token, { polling: true });
+
+  userBot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
+    const name   = msg.from?.first_name || 'друг';
+    const appUrl = getMiniAppUrl();
+    const param  = (match && match[1] || '').trim();
+    console.log('[bot /start] param:', JSON.stringify(param.substring(0, 50)));
+
+    if (param === 'inquiry' || param.startsWith('inq_')) {
+      const adminHandle = (process.env.ADMIN_TELEGRAM || 'https://t.me/Rebuket_admin')
+        .replace('https://t.me/', '').replace('@', '').trim();
+
+      let readyText = '🌸 Здравствуйте! Хочу сделать заказ через ReBuket.';
+
+      if (param.startsWith('inq_')) {
+        try {
+          const b64 = param.slice(4).replace(/-/g, '+').replace(/_/g, '/');
+          const decoded = decodeURIComponent(escape(Buffer.from(b64, 'base64').toString('binary')));
+          if (decoded && decoded.length > 5) readyText = decoded;
+        } catch(e) { console.log('decode err:', e.message); }
+      }
+
+      const adminUrl = 'https://t.me/' + adminHandle + '?text=' + encodeURIComponent(readyText);
+      await userBot.sendMessage(msg.chat.id,
+        '✅ <b>Заявка принята!</b>\n\nДля полного оформления заказа — нажмите кнопку ниже, откроется чат с готовым сообщением — останется нажать Отправить 👇',
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '✈️ Отправить заказ администратору', url: adminUrl }]] } }
+      );
+      return;
+    }
+
+    if (param === 'inquiry_OLDCODE') {
+      const adminUrl = process.env.ADMIN_TELEGRAM || 'https://t.me/Rebuket_admin';
+      await userBot.sendMessage(msg.chat.id,
+        `🌸 <b>Привет, ${escHtml(name)}!</b>\n\nВаша заявка успешно отправлена администратору.\n\nЧтобы уточнить детали заказа — напишите администратору напрямую:`,
+        { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '✈️ Написать администратору', url: adminUrl }]] } }
+      );
+      return;
+    }
+
+    await userBot.sendMessage(msg.chat.id,
+      `🌸 <b>Привет, ${escHtml(name)}!</b>\n\nДобро пожаловать в <b>ReBuket</b> — маркетплейс букетов и сладостей в Таджикистане.\n\n💐 <b>Купить</b> — просматривать букеты, корзины, игрушки и сладости\n🛍 <b>Продать</b> — разместить своё объявление\n📩 <b>Связаться</b> — оставить заявку продавцу\n\n👇 Нажмите кнопку ниже чтобы открыть каталог:`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: appUrl } }]] } }
+    );
+  });
+
+  userBot.onText(/\/catalog/, async (msg) => {
+    await userBot.sendMessage(msg.chat.id, `💐 <b>Каталог ReBuket</b>\n\nБукеты, корзины, игрушки и сладости:`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '💐 Смотреть каталог', web_app: { url: getMiniAppUrl() + '#catalog' } }]] } }
+    );
+  });
+
+  userBot.onText(/\/sell/, async (msg) => {
+    await userBot.sendMessage(msg.chat.id, `🛍 <b>Разместить объявление</b>\n\nПродайте букеты или сладости через ReBuket!`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить объявление', web_app: { url: getMiniAppUrl() + '#sell' } }]] } }
+    );
+  });
+
+  userBot.onText(/\/help/, async (msg) => {
+    await userBot.sendMessage(msg.chat.id,
+      `🌸 <b>ReBuket — помощь</b>\n\n/start   — запустить бота\n/catalog — каталог\n/sell    — разместить объявление\n/help    — эта справка`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] } }
+    );
+  });
+
+  userBot.on('message', async (msg) => {
+    if (msg.text?.startsWith('/')) return;
+    await userBot.sendMessage(msg.chat.id, `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
+      { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] } }
+    );
+  });
+
+  userBot.on('polling_error', (err) => {
+    if (!err.message?.includes('409')) console.log('USER BOT error:', err.message);
+  });
+
+  console.log('🤖 USER BOT запущен | Mini App:', getMiniAppUrl());
+}
+
+function initAdminBot() {
+  const token = process.env.BOT_TOKEN_ADMIN;
+  if (!token) { console.log('BOT_TOKEN_ADMIN не задан'); return; }
+  adminBot = new TG(token, { polling: true });
+
+  adminBot.onText(/\/start/, async (msg) => {
+    const chatId = String(msg.chat.id);
+    const isNew  = !adminChatIds.has(chatId);
+    adminChatIds.add(chatId);
+    await adminBot.sendMessage(msg.chat.id,
+      `🔐 <b>ReBuket Admin Bot</b>\n\n` +
+      (isNew
+        ? `✅ Ваш Chat ID <b>${chatId}</b> добавлен.\nТеперь вы будете получать уведомления.`
+        : `Вы уже подключены. Ваш Chat ID: <b>${chatId}</b>`),
+      { parse_mode: 'HTML' }
+    );
+    if (isNew) console.log(`✅ Новый админ: ADMIN_CHAT_ID_1=${chatId}`);
+  });
+
+  adminBot.on('callback_query', async (query) => {
+    try {
+      await handleOrderCallback(query);
+    } catch (err) {
+      console.error('[adminBot callback_query] Error:', err.message);
+    }
+  });
+
+  adminBot.on('polling_error', (err) => {
+    if (!err.message?.includes('409')) console.log('ADMIN BOT error:', err.message);
+  });
+
+  console.log('🛠  ADMIN BOT запущен');
+}
+
+async function sendToAdmins(text, opts = {}) {
+  if (!adminBot) return;
+  if (!adminChatIds.size) { console.log('⚠️ Нет админов'); return; }
+  for (const chatId of adminChatIds) {
+    try {
+      await adminBot.sendMessage(chatId, text, { parse_mode: 'HTML', ...opts });
+    } catch(e) {
+      console.log(`ADMIN BOT send error (${chatId}):`, e.message);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Публикация в канал при одобрении
+// ─────────────────────────────────────────────
+async function getNextSerial(channel) {
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { data, error } = await db.rpc('increment_counter', { ch: channel });
+    if (error) throw new Error(error.message);
+    console.log('[getNextSerial] channel=' + channel + ' next=' + data);
+    return data;
+  } catch(e) {
+    console.log('[getNextSerial] Error:', e.message);
+    return null;
+  }
+}
+
+async function publishToChannel(p) {
+  const city      = (p.city || '').toLowerCase().trim();
+  const isKhujand = KHUJAND_CITIES.includes(city);
+  const channelId = isKhujand
+    ? (process.env.CHANNEL_ID_KHUJAND || '-1003818624807')
+    : process.env.CHANNEL_ID;
+
+  console.log(`[publishToChannel] city="${city}" isKhujand=${isKhujand} channelId=${channelId}`);
+
+  if (!channelId) {
+    console.log('[publishToChannel] CHANNEL_ID не задан в .env');
+    return;
+  }
+
+  const bot = userBot || adminBot;
+  if (!bot) {
+    console.log('[publishToChannel] Нет активного бота');
+    return;
+  }
+
+  const EMOJIS = { bouquet: '💐', basket: '🧺', bear: '🧸', sweets: '🍰' };
+  const em     = EMOJIS[p.category] || '🌸';
+  const price  = (Math.ceil(Number(p.price) * 1.20 / 10) * 10).toLocaleString('ru-RU');
+  const admin  = process.env.ADMIN_TELEGRAM
+    ? process.env.ADMIN_TELEGRAM.replace('https://t.me/', '@')
+    : '@rebuket_admin';
+  const url    = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
+  const photos = Array.isArray(p.photos) ? p.photos.filter(Boolean).map(ph => ph.split('?')[0]) : [];
+
+  const serialNum = await getNextSerial(isKhujand ? 'khujand' : 'dushanbe');
+  const code      = getProductCode(serialNum, isKhujand ? 'AK' : 'AB');
+
+  const finalPrice = p.is_admin_price
+    ? Number(p.price).toLocaleString('ru-RU')
+    : price;
+
+  const caption =
+    `${em} ${escHtml(p.title)}\n` +
+    `📍 ${escHtml(p.city)}\n` +
+    (p.size       ? `📏 <b>Размер: ${escHtml(p.size)}</b>\n` : '') +
+    (p.gift_when  ? `🎁 <b>Когда получили: ${escHtml(p.gift_when)}</b>\n` : '') +
+    (p.market_price ? `🏪 Цена в магазинах: ${(Math.ceil(Number(p.market_price) / 10) * 10).toLocaleString('ru-RU')} сомони\n` : '') +
+    `💰 <b>Наша цена: ${finalPrice} сомони</b>\n` +
+    `❓ По вопросам: ${admin}\n` +
+    (code ? `🆔 ${code}\n` : '') +
+    `\n<a href="${url}">Смотреть объявление на ReBuket</a>`;
+
+  try {
+    let sent = null;
+    console.log('[publishToChannel] photos:', photos.length, 'caption length:', caption.length);
+
+    if (photos.length === 0) {
+      sent = await bot.sendMessage(channelId, caption, { parse_mode: 'HTML' });
+    } else if (photos.length === 1) {
+      try {
+        sent = await bot.sendPhoto(channelId, photos[0], { caption, parse_mode: 'HTML' });
+      } catch(photoErr) {
+        console.log('[publishToChannel] Photo failed, sending text:', photoErr.message);
+        sent = await bot.sendMessage(channelId, caption, { parse_mode: 'HTML' });
+      }
+    } else {
+      try {
+        const media = photos.slice(0, 10).map((ph, i) => ({
+          type: 'photo',
+          media: ph,
+          ...(i === 0 ? { caption, parse_mode: 'HTML' } : {})
+        }));
+        const results = await bot.sendMediaGroup(channelId, media);
+        sent = Array.isArray(results) ? results[0] : results;
+      } catch(mediaErr) {
+        console.log('[publishToChannel] MediaGroup failed, trying single photo:', mediaErr.message);
+        try {
+          sent = await bot.sendPhoto(channelId, photos[0], { caption, parse_mode: 'HTML' });
+        } catch(e2) {
+          console.log('[publishToChannel] Single photo failed, sending text:', e2.message);
+          sent = await bot.sendMessage(channelId, caption, { parse_mode: 'HTML' });
+        }
+      }
+    }
+
+    try {
+      const { createClient } = require('@supabase/supabase-js');
+      const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      if (sent?.message_id) {
+        await db.from('products').update({
+          channel_message_id: sent.message_id,
+          channel_name: isKhujand ? 'khujand' : 'dushanbe'
+        }).eq('id', p.id);
+      }
+    } catch(e) {
+      console.log('Не удалось сохранить message_id:', e.message);
+    }
+
+    console.log(`📢 Опубликовано в канал: ${p.title} [${code}]`);
+  } catch(e) {
+    console.log('[publishToChannel] Ошибка:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Пометить истёкшие посты в канале
+// ─────────────────────────────────────────────
+async function markExpiredInChannel(p) {
+  const bot = userBot || adminBot;
+  if (!bot || !p.channel_message_id || !p.channel_name) return;
+
+  const channelId = p.channel_name === 'khujand'
+    ? (process.env.CHANNEL_ID_KHUJAND || '-1003818624807')
+    : process.env.CHANNEL_ID;
+  if (!channelId) return;
+
+  const EMOJIS = { bouquet: '💐', basket: '🧺', bear: '🧸', sweets: '🍰' };
+  const em     = EMOJIS[p.category] || '🌸';
+  const price  = (Math.ceil(Number(p.price) * 1.20 / 10) * 10).toLocaleString('ru-RU');
+  const admin  = process.env.ADMIN_TELEGRAM
+    ? process.env.ADMIN_TELEGRAM.replace('https://t.me/', '@')
+    : '@rebuket_admin';
+
+  const newCaption =
+    `🔴 <b>СНЯТО С ПРОДАЖИ</b>\n\n` +
+    `${em} <b>${escHtml(p.title)}</b>\n` +
+    `📍 ${escHtml(p.city)}\n` +
+    `💰 Цена была: <b>${price} сомони</b>\n\n` +
+    `❓ По вопросам: ${admin}`;
+
+  try {
+    await bot.editMessageCaption(newCaption, {
+      chat_id:    channelId,
+      message_id: p.channel_message_id,
+      parse_mode: 'HTML'
+    });
+    console.log(`🔴 Пост помечен как снято: ${p.title}`);
+  } catch(e) {
+    console.log('Ошибка редактирования поста:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Уведомление продавцу — одобрено
+// ─────────────────────────────────────────────
+async function notifySellerApproved(p) {
+  try {
+    await publishToChannel(p);
+  } catch(e) {
+    console.log('Channel publish error:', e.message);
+  }
+
+  if (!userBot || !p.seller_chat_id) return;
+
+  const url = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
+  try {
+    await userBot.sendMessage(p.seller_chat_id,
+      `🎉 <b>Ваше объявление одобрено!</b>\n\n📦 <b>${escHtml(p.title)}</b>\n💰 ${p.price} TJS · 📍 ${escHtml(p.city)}\n\nТеперь его видят все покупатели. Удачных продаж! 🌸`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть моё объявление', web_app: { url } }]] } }
+    );
+
+    if (p.channel_message_id && p.channel_name && userBot) {
+      const channelId = p.channel_name === 'khujand'
+        ? (process.env.CHANNEL_ID_KHUJAND || '-1003818624807')
+        : process.env.CHANNEL_ID;
+      if (channelId) {
+        try {
+          await userBot.forwardMessage(p.seller_chat_id, channelId, p.channel_message_id);
+        } catch(fe) {
+          console.log('forwardMessage error:', fe.message);
+        }
+      }
+    }
+  } catch(e) {
+    console.log('Не удалось уведомить продавца:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Уведомление продавцу — отклонено
+// ─────────────────────────────────────────────
+async function notifySellerRejected(p) {
+  if (!userBot || !p.seller_chat_id) return;
+  try {
+    await userBot.sendMessage(p.seller_chat_id,
+      `❌ <b>Ваше объявление отклонено</b>\n\n📦 <b>${escHtml(p.title)}</b>\n\nК сожалению, объявление не прошло модерацию.\nВы можете разместить новое объявление:`,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить новое', web_app: { url: getMiniAppUrl() + '#sell' } }]] } }
+    );
+  } catch(e) {
+    console.log('Не удалось уведомить продавца:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Уведомление — новое объявление (для админов)
+// ─────────────────────────────────────────────
+const CATS = { bouquet: '💐 Букет', basket: '🧺 Корзина', bear: '🧸 Игрушки', sweets: '🍰 Сладости' };
+
+async function notifyProduct(p) {
+  const url = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
+  await sendToAdmins(
+    `📦 <b>Новое объявление на проверке!</b>\n─────────────────\n` +
+    `${CATS[p.category] || p.category}: <b>${escHtml(p.title)}</b>\n` +
+    `💰 ${p.price} TJS · 📍 ${escHtml(p.city)}\n` +
+    `👤 ${escHtml(p.seller_name || '—')} · 📞 ${escHtml(p.seller_phone)}\n` +
+    `✈️ ${escHtml(p.seller_telegram || '—')}\n` +
+    `🔗 <a href="${url}">Открыть объявление</a>`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Одобрить', callback_data: `approve:${p.id}` }, { text: '❌ Отклонить', callback_data: `reject:${p.id}` }],
+          [{ text: '🔗 Открыть объявление', url }]
+        ]
+      }
+    }
+  );
+}
+
+// ─────────────────────────────────────────────
+//  Уведомление — новая заявка (для админов)
+// ─────────────────────────────────────────────
+async function notifyInquiry(inq, productTitle, productSlug, productId) {
+  const url = (productSlug || productId)
+    ? `${getMiniAppUrl()}/#product-${productSlug || productId}`
+    : null;
+  await sendToAdmins(
+    `🛒 <b>Новая заявка!</b>\n─────────────────\n` +
+    `📦 ${escHtml(productTitle || '—')}\n` +
+    `👤 ${escHtml(inq.customer_name || '—')}\n` +
+    `📞 <b>${escHtml(inq.customer_phone)}</b>\n` +
+    `✈️ ${escHtml(inq.customer_telegram || '—')}\n` +
+    `📝 ${escHtml(inq.note || '—')}` +
+    (url ? `\n🔗 <a href="${url}">Открыть объявление</a>` : ''),
+    url ? { reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть объявление', url }]] } } : {}
+  );
+}
+
+// ─────────────────────────────────────────────
+//  Магазины: уведомления
+// ─────────────────────────────────────────────
+async function notifyShopRegistration(shop) {
+  await sendToAdmins(
+    `🏪 <b>Новая заявка на регистрацию магазина!</b>\n` +
+    `─────────────────\n` +
+    `👤 Название: <b>${escHtml(shop.shop_name || '—')}</b>\n` +
+    `📞 Телефон: <b>${escHtml(shop.phone)}</b>\n` +
+    `🕐 ${new Date().toLocaleString('ru')}`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✅ Одобрить магазин', callback_data: `shop_approve:${shop.id}` },
+          { text: '❌ Отклонить',        callback_data: `shop_reject:${shop.id}` }
+        ]]
+      }
+    }
+  );
+}
+
+async function notifyShopApproved(shop) {
+  if (!userBot || !shop.telegram_chat_id) return;
+  try {
+    await userBot.sendMessage(shop.telegram_chat_id,
+      `✅ <b>Ваш магазин одобрен!</b>\n\n` +
+      `Теперь вы можете войти как магазин на ReBuket и размещать объявления.\n\n` +
+      `📞 Телефон для входа: ${escHtml(shop.phone)}`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [[{ text: '🏪 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] }
+      }
+    );
+  } catch(e) {
+    console.log('notifyShopApproved error:', e.message);
+  }
+}
+
+async function notifyShopRejected(shop) {
+  if (!userBot || !shop.telegram_chat_id) return;
+  try {
+    await userBot.sendMessage(shop.telegram_chat_id,
+      `❌ <b>Заявка на регистрацию магазина отклонена</b>\n\nСвяжитесь с администратором для уточнения причин.`,
+      { parse_mode: 'HTML' }
+    );
+  } catch(e) {
+    console.log('notifyShopRejected error:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Callback: Одобрить / Отклонить (объявления и магазины)
+// ─────────────────────────────────────────────
+function setupCallbacks(onApprove, onReject) {
+  if (!adminBot) return;
+  adminBot.on('callback_query', async (q) => {
+    const parts  = (q.data || '').split(':');
+    const action = parts[0];
+    const id     = parts[1];
+
+    // ── Объявления ──
+    if (action === 'approve') {
+      await onApprove(id);
+      await adminBot.answerCallbackQuery(q.id, { text: '✅ Одобрено!' });
+      await adminBot.editMessageReplyMarkup(
+        { inline_keyboard: [[{ text: '✅ Одобрено', callback_data: 'done' }]] },
+        { chat_id: q.message.chat.id, message_id: q.message.message_id }
+      ).catch(() => {});
+    }
+
+    if (action === 'reject') {
+      await onReject(id);
+      await adminBot.answerCallbackQuery(q.id, { text: '❌ Отклонено' });
+      await adminBot.editMessageReplyMarkup(
+        { inline_keyboard: [[{ text: '❌ Отклонено', callback_data: 'done' }]] },
+        { chat_id: q.message.chat.id, message_id: q.message.message_id }
+      ).catch(() => {});
+    }
+
+    // ── Магазины ──
+    if (action === 'shop_approve') {
+      try {
+        const S = require('../controllers/shops');
+        const shop = await S.approve(id);
+        await notifyShopApproved(shop);
+        await adminBot.answerCallbackQuery(q.id, { text: '✅ Магазин одобрен!' });
+        await adminBot.editMessageReplyMarkup(
+          { inline_keyboard: [[{ text: '✅ Магазин одобрен', callback_data: 'done' }]] },
+          { chat_id: q.message.chat.id, message_id: q.message.message_id }
+        ).catch(() => {});
+      } catch(e) {
+        console.log('shop_approve error:', e.message);
+        await adminBot.answerCallbackQuery(q.id, { text: '❌ Ошибка: ' + e.message });
+      }
+    }
+
+    if (action === 'shop_reject') {
+      try {
+        const S = require('../controllers/shops');
+        const shop = await S.reject(id);
+        await notifyShopRejected(shop);
+        await adminBot.answerCallbackQuery(q.id, { text: '❌ Отклонено' });
+        await adminBot.editMessageReplyMarkup(
+          { inline_keyboard: [[{ text: '❌ Отклонено', callback_data: 'done' }]] },
+          { chat_id: q.message.chat.id, message_id: q.message.message_id }
+        ).catch(() => {});
+      } catch(e) {
+        console.log('shop_reject error:', e.message);
+        await adminBot.answerCallbackQuery(q.id, { text: '❌ Ошибка: ' + e.message });
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+//  Уведомление покупателю — заявка отправлена
+// ─────────────────────────────────────────────
+async function notifyBuyerInquirySent(d) {
+  if (!userBot || !d.customer_chat_id) return;
+  try {
+    const COMM = 0.20;
+    const price = d.productPrice
+      ? (Math.ceil(Number(d.productPrice) * (1 + COMM) / 10) * 10).toLocaleString('ru-RU') + ' сомони'
+      : null;
+
+    const url = (d.productSlug || d.productId)
+      ? getMiniAppUrl() + '/#product-' + (d.productSlug || d.productId)
+      : getMiniAppUrl();
+
+    const adminHandle = (process.env.ADMIN_TELEGRAM || 'https://t.me/Rebuket_admin')
+      .replace('https://t.me/', '').replace('@', '').trim();
+
+    const parts = [
+      '🌸 Здравствуйте! Хочу купить:',
+      '',
+      '📦 ' + (d.productTitle || '—'),
+      '📞 Мой телефон: ' + d.customer_phone
+    ];
+    if (d.customer_name)     parts.push('👤 Имя: '          + d.customer_name);
+    if (d.customer_telegram) parts.push('✈️ Telegram: '     + d.customer_telegram);
+    if (d.note)              parts.push('📝 Комментарий: '  + d.note);
+    parts.push('', '🔗 ' + url);
+
+    const readyText = parts.join('\n');
+    const tgLink = 'https://t.me/' + adminHandle + '?text=' + encodeURIComponent(readyText);
+
+    const text =
+      '✅ <b>Ваша заявка принята!</b>\n\n' +
+      '📦 ' + escHtml(d.productTitle || '—') + '\n' +
+      (price ? '💰 ' + price + '\n' : '') +
+      '\nНажмите кнопку ниже — сообщение уже готово, останется только нажать Отправить.';
+
+    await userBot.sendMessage(d.customer_chat_id, text, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '✈️ Написать администратору', url: tgLink }
+        ]]
+      }
+    });
+  } catch(e) {
+    console.log('notifyBuyerInquirySent error:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
+// 🏪 SHOP BOT — для магазинов
+// /start → запрос телефона → запрос пароля → привязка chat_id
+// callbacks: shop_accept:<id>, shop_reject:<id>, shop_preparing/ready/delivered:<id>
+// ─────────────────────────────────────────────
+
+// Состояние авторизации по chat_id
+const shopAuthState = new Map(); // chatId -> { step: 'phone'|'password', phone?: string }
+
+function initShopBot() {
+  const token = process.env.BOT_TOKEN_SHOP || process.env.SHOP_ID;
+  if (!token) { console.log('BOT_TOKEN_SHOP / SHOP_ID не задан — shopBot не запущен'); return; }
+  try {
+    shopBot = new TG(token, { polling: true });
+  } catch (e) {
+    console.error('initShopBot: failed to create bot:', e.message);
+    return;
+  }
+
+  const bcrypt = require('bcryptjs');
+
+  function getDb() {
+    const { createClient } = require('@supabase/supabase-js');
+    return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  }
+
+  // /start — начинаем авторизацию: запрашиваем номер
+  shopBot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    shopAuthState.set(chatId, { step: 'phone' });
+    await shopBot.sendMessage(chatId,
+      `🏪 <b>ReBuket Shop Bot</b>\n\n` +
+      `Чтобы получать заказы, авторизуйтесь как магазин.\n\n` +
+      `📞 Шаг 1/2: отправьте <b>номер телефона</b> вашего магазина (тот, с которым вы регистрировались).\n\n` +
+      `Можно нажать кнопку ниже или ввести вручную.`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          keyboard: [[{ text: '📞 Поделиться номером', request_contact: true }]],
+          resize_keyboard: true, one_time_keyboard: true
+        }
+      }
+    );
+  });
+
+  // /logout — отвязать аккаунт
+  shopBot.onText(/\/logout/, async (msg) => {
+    const chatId = msg.chat.id;
+    try {
+      await getDb().from('shops').update({ telegram_chat_id: null }).eq('telegram_chat_id', chatId);
+      shopAuthState.delete(chatId);
+      await shopBot.sendMessage(chatId, '✅ Вы вышли из аккаунта. Отправьте /start чтобы войти снова.', { reply_markup: { remove_keyboard: true } });
+    } catch (e) {
+      console.error('[shopBot /logout]', e.message);
+    }
+  });
+
+  // Контакт — используем как номер для шага 1
+  shopBot.on('contact', async (msg) => {
+    const chatId = msg.chat.id;
+    const phone = (msg.contact && msg.contact.phone_number || '').replace(/[^\d+]/g, '');
+    if (!phone) return;
+    await handlePhoneInput(chatId, phone);
+  });
+
+  // Любое текстовое сообщение — обрабатываем по состоянию
+  shopBot.on('message', async (msg) => {
+    if (!msg.text) return;
+    if (msg.text.startsWith('/')) return; // команды обработаны выше
+    const chatId = msg.chat.id;
+    const state = shopAuthState.get(chatId);
+    if (!state) return; // нет активной авторизации
+
+    if (state.step === 'phone') {
+      const phone = msg.text.replace(/[^\d+]/g, '');
+      if (!phone || phone.length < 5) {
+        await shopBot.sendMessage(chatId, '⚠️ Похоже на неверный номер. Попробуйте ещё раз.');
+        return;
+      }
+      await handlePhoneInput(chatId, phone);
+    } else if (state.step === 'password') {
+      const password = msg.text.trim();
+      // Удаляем сообщение с паролем для безопасности
+      try { await shopBot.deleteMessage(chatId, msg.message_id); } catch(_) {}
+      await handlePasswordInput(chatId, password, state.phone);
+    }
+  });
+
+  async function handlePhoneInput(chatId, rawPhone) {
+    try {
+      const variants = [rawPhone, rawPhone.replace(/^\+/, ''), '+' + rawPhone.replace(/^\+/, '')];
+      const { data: shops } = await getDb().from('shops').select('phone, shop_name, status').in('phone', variants);
+      const shop = (shops || [])[0];
+      if (!shop) {
+        await shopBot.sendMessage(chatId, `❌ Магазин с номером <b>${rawPhone}</b> не найден.\n\nПроверьте номер и отправьте ещё раз. Если магазин не зарегистрирован — сначала пройдите регистрацию в приложении.`, { parse_mode: 'HTML' });
+        return;
+      }
+      if (shop.status !== 'active') {
+        await shopBot.sendMessage(chatId, `⚠️ Магазин найден, но статус: <b>${shop.status}</b>. Дождитесь одобрения администратором.`, { parse_mode: 'HTML' });
+        shopAuthState.delete(chatId);
+        return;
+      }
+      shopAuthState.set(chatId, { step: 'password', phone: shop.phone });
+      await shopBot.sendMessage(chatId,
+        `✅ Магазин найден: <b>${shop.shop_name || shop.phone}</b>\n\n` +
+        `🔒 Шаг 2/2: отправьте <b>пароль</b> от аккаунта магазина.\n\n` +
+        `<i>Сообщение с паролем будет удалено автоматически.</i>`,
+        { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
+      );
+    } catch (e) {
+      console.error('[shopBot handlePhoneInput]', e.message);
+      await shopBot.sendMessage(chatId, '❌ Ошибка. Попробуйте /start снова.');
+    }
+  }
+
+  async function handlePasswordInput(chatId, password, phone) {
+    try {
+      const db = getDb();
+      const { data: shop } = await db.from('shops').select('phone, shop_name, password_hash, status').eq('phone', phone).single();
+      if (!shop || !shop.password_hash) {
+        await shopBot.sendMessage(chatId, '❌ Магазин не найден или пароль не задан.');
+        shopAuthState.delete(chatId);
+        return;
+      }
+      const valid = await bcrypt.compare(password, shop.password_hash);
+      if (!valid) {
+        await shopBot.sendMessage(chatId, '❌ Неверный пароль. Отправьте /start чтобы попробовать снова.');
+        shopAuthState.delete(chatId);
+        return;
+      }
+      // Привязываем chat_id
+      await db.from('shops').update({ telegram_chat_id: chatId }).eq('phone', shop.phone);
+      shopAuthState.delete(chatId);
+      await shopBot.sendMessage(chatId,
+        `✅ <b>${shop.shop_name || 'Магазин'}</b> успешно подключён!\n\n` +
+        `Теперь вы будете получать только <b>свои</b> заказы — после подтверждения оплаты администратором.\n\n` +
+        `📞 Телефон: ${shop.phone}\n` +
+        `Команды:\n• /logout — выйти из аккаунта`,
+        { parse_mode: 'HTML' }
+      );
+      console.log('[shopBot] Authorized:', shop.phone, '→ chat_id:', chatId);
+    } catch (e) {
+      console.error('[shopBot handlePasswordInput]', e.message);
+      await shopBot.sendMessage(chatId, '❌ Ошибка авторизации. Попробуйте /start снова.');
+      shopAuthState.delete(chatId);
+    }
+  }
+
+  // Callbacks: accept / reject orders, mark stages
+  shopBot.on('callback_query', async (q) => {
+    const data = q.data || '';
+    const m = data.match(/^shop_(accept|reject|preparing|ready|delivered):(.+)$/);
+    if (!m) return;
+    const action = m[1];
+    const orderId = m[2];
+    const newStatus = action === 'accept' ? 'seller_accepted'
+                    : action === 'reject' ? 'rejected'
+                    : action;
+    const labels = {
+      seller_accepted: '✅ Заказ принят — контакты клиента открыты',
+      rejected: '❌ Заказ отклонён',
+      preparing: '👨‍🍳 Готовим заказ',
+      ready: '📦 Заказ готов к выдаче',
+      delivered: '🚚 Заказ доставлен'
+    };
+
+    try {
+      const db = getDb();
+      // Проверяем что этот chat_id привязан к магазину
+      const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', q.message.chat.id).single();
+      if (!shop) {
+        await shopBot.answerCallbackQuery(q.id, { text: 'Сначала авторизуйтесь через /start', show_alert: true });
+        return;
+      }
+
+      // Проверяем что заказ принадлежит этому магазину
+      const { data: order } = await db.from('orders').select('status, items, customer_phone, customer_address').eq('id', orderId).single();
+      if (!order) {
+        await shopBot.answerCallbackQuery(q.id, { text: 'Заказ не найден', show_alert: true });
+        return;
+      }
+      let items = [];
+      if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch(_){} }
+      else if (Array.isArray(order.items)) items = order.items;
+      const orderHasShopItem = items.some(it => (it.seller_phone || '').toString().trim() === shop.phone);
+      if (!orderHasShopItem) {
+        await shopBot.answerCallbackQuery(q.id, { text: 'Этот заказ не для вашего магазина', show_alert: true });
+        return;
+      }
+      if (order.status === 'pending') {
+        await shopBot.answerCallbackQuery(q.id, { text: 'Заказ ещё не подтверждён админом', show_alert: true });
+        return;
+      }
+
+      const { data: updated, error } = await db.from('orders').update({ status: newStatus }).eq('id', orderId).select().single();
+      if (error) throw error;
+
+      await shopBot.answerCallbackQuery(q.id, { text: labels[newStatus] || 'OK' });
+
+      let reply = `<b>${labels[newStatus] || newStatus}</b>\nЗаказ #${orderId}\n`;
+      if (newStatus === 'seller_accepted') {
+        reply += `\n📞 Клиент: <b>${updated.customer_phone}</b>\n🏠 Адрес: ${updated.customer_address}`;
+      }
+      const nextKb = [];
+      if (newStatus === 'seller_accepted') nextKb.push([{ text: '👨‍🍳 Готовим', callback_data: `shop_preparing:${orderId}` }]);
+      if (newStatus === 'preparing') nextKb.push([{ text: '📦 Готов', callback_data: `shop_ready:${orderId}` }]);
+      if (newStatus === 'ready') nextKb.push([{ text: '🚚 Доставлен', callback_data: `shop_delivered:${orderId}` }]);
+
+      await shopBot.sendMessage(q.message.chat.id, reply, {
+        parse_mode: 'HTML',
+        reply_markup: nextKb.length ? { inline_keyboard: nextKb } : undefined
+      });
+
+      try {
+        await notifyAdminAboutShopOrder(updated, shop);
+      } catch (e) { console.log('admin notify err:', e.message); }
+    } catch (e) {
+      console.error('[shopBot callback] error:', e.message);
+      try { await shopBot.answerCallbackQuery(q.id, { text: 'Ошибка: ' + e.message, show_alert: true }); } catch(_){}
+    }
+  });
+
+  shopBot.on('polling_error', (err) => {
+    if (!err.message?.includes('409')) console.log('SHOP BOT error:', err.message);
+  });
+
+  console.log('🏪 SHOP BOT запущен');
+}
+
+module.exports = {
+  initBots,
+  setupCallbacks,
+  notifyProduct,
+  notifyInquiry,
+  notifySellerApproved,
+  notifySellerRejected,
+  notifyBuyerInquirySent,
+  notifyShopRegistration,
+  notifyShopApproved,
+  notifyShopRejected,
+  markExpiredInChannel,
+  setupCallbacks,
+  notifyAdminAboutOrder,
+  notifyAdminAboutShopOrder,
+  notifySellerAboutOrder,
+};

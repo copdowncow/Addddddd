@@ -1,0 +1,27 @@
+{
+  "name": "rebuket",
+  "version": "2.0.0",
+  "description": "ReBuket — маркетплейс букетов и сладостей",
+  "main": "server/src/index.js",
+  "scripts": {
+    "start": "node server/src/index.js",
+    "dev": "node --watch server/src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "git": "^0.1.5",
+    "helmet": "^7.1.0",
+    "heic-convert": "^2.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "telegram": "^2.22.2",
+    "uuid": "^10.0.0",
+    "sharp": "^0.33.4"
+  }
+}
