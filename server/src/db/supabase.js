@@ -3,6 +3,10 @@ require('dotenv').config();
 
 const { createClient } = require('@supabase/supabase-js');
 
+// Node.js < 22 не имеет встроенного WebSocket — используем ws для Supabase Realtime
+let wsTransport;
+try { wsTransport = require('ws'); } catch (_) { wsTransport = undefined; }
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
@@ -11,14 +15,24 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   process.exit(1);
 }
 
+const clientOptions = {
+  auth: { persistSession: false, autoRefreshToken: false },
+};
+if (wsTransport) {
+  clientOptions.realtime = { transport: wsTransport };
+}
+
 let _client = null;
 
 function getClient() {
   if (_client) return _client;
-  _client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  _client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, clientOptions);
   return _client;
+}
+
+// Helper для модулей, которым нужен новый клиент (например telegram.js)
+function createSupabaseClient() {
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, clientOptions);
 }
 
 async function q(fn) {
@@ -54,4 +68,4 @@ async function uploadPhoto(buffer, filename, mimetype) {
   return urlData.publicUrl;
 }
 
-module.exports = { getClient, q, uploadPhoto };
+module.exports = { getClient, q, uploadPhoto, createSupabaseClient };

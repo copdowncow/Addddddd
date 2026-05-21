@@ -33,6 +33,7 @@ exports.createOrder = async (req, res) => {
       receiver_name,
       receiver_phone,
       receiver_address,
+      customer_chat_id,
     } = req.body;
 
     const receiptFile = req.file;
@@ -95,6 +96,7 @@ exports.createOrder = async (req, res) => {
         receiver_name: receiver_name || null,
         receiver_phone: receiver_phone || null,
         receiver_address: receiver_address || null,
+        customer_chat_id: customer_chat_id ? Number(customer_chat_id) : null,
         status: 'pending',
       })
       .select()

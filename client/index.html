@@ -2040,6 +2040,12 @@ window.completeCheckout = async () => {
   fd.append('total', total);
   fd.append('items', JSON.stringify(window._cart));
   fd.append('receipt', receiptFile);
+
+  // Telegram chat_id, чтобы бот мог писать клиенту о статусе
+  try {
+    const tgUid = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    if (tgUid) fd.append('customer_chat_id', String(tgUid));
+  } catch(_) {}
   
   if (anotherPerson) {
     fd.append('receiver_name', receiverName);

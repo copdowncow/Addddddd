@@ -7,6 +7,11 @@ let adminBot = null;
 let shopBot  = null;
 const adminChatIds = new Set();
 
+// Заказы, ожидающие фото-отчёта от магазина перед статусом 'ready': shopChatId -> orderId
+const shopPendingPhoto = new Map();
+// Клиенты, вводящие причину возврата: customerChatId -> orderId
+const customerPendingRefundReason = new Map();
+
 const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
 
 function getMiniAppUrl() {
@@ -106,8 +111,8 @@ async function handleOrderCallback(callbackQuery) {
   const label = status === 'payment_confirmed' ? '✅ Оплата подтверждена — продавец уведомлён' : '❌ Заказ отклонён';
 
   try {
-    const { createClient } = require('@supabase/supabase-js');
-    const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { createSupabaseClient } = require('../db/supabase');
+    const db = createSupabaseClient();
     const { data: updatedOrder, error } = await db.from('orders').update({ status }).eq('id', orderId).select().single();
     if (error) throw new Error(error.message);
 
@@ -176,8 +181,8 @@ async function notifySellerAboutOrder(order) {
     return;
   }
 
-  const { createClient } = require('@supabase/supabase-js');
-  const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  const { createSupabaseClient } = require('../db/supabase');
+  const db = createSupabaseClient();
   const { data: shops } = await db
     .from('shops')
     .select('phone, shop_name, telegram_chat_id')
@@ -261,6 +266,8 @@ function initBots() {
   initUserBot();
   initAdminBot();
   initShopBot();
+  setupCustomerOrderHandlers();
+  startAutoConfirmInterval();
 }
 
 function initUserBot() {
@@ -395,8 +402,8 @@ async function sendToAdmins(text, opts = {}) {
 // ─────────────────────────────────────────────
 async function getNextSerial(channel) {
   try {
-    const { createClient } = require('@supabase/supabase-js');
-    const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { createSupabaseClient } = require('../db/supabase');
+    const db = createSupabaseClient();
     const { data, error } = await db.rpc('increment_counter', { ch: channel });
     if (error) throw new Error(error.message);
     console.log('[getNextSerial] channel=' + channel + ' next=' + data);
@@ -488,8 +495,8 @@ async function publishToChannel(p) {
     }
 
     try {
-      const { createClient } = require('@supabase/supabase-js');
-      const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
       if (sent?.message_id) {
         await db.from('products').update({
           channel_message_id: sent.message_id,
@@ -826,8 +833,8 @@ function initShopBot() {
   const bcrypt = require('bcryptjs');
 
   function getDb() {
-    const { createClient } = require('@supabase/supabase-js');
-    return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+    const { createSupabaseClient } = require('../db/supabase');
+    return createSupabaseClient();
   }
 
   // /start — начинаем авторизацию: запрашиваем номер
@@ -952,13 +959,124 @@ function initShopBot() {
     }
   }
 
+  // /cancel — отмена ожидания фото
+  shopBot.onText(/\/cancel/, async (msg) => {
+    if (shopPendingPhoto.has(msg.chat.id)) {
+      shopPendingPhoto.delete(msg.chat.id);
+      await shopBot.sendMessage(msg.chat.id, '↩️ Отмена. Фото не отправлено.');
+    }
+  });
+
+  // Photo handler — фото-отчёт магазина для статуса 'ready'
+  shopBot.on('photo', async (msg) => {
+    const chatId = msg.chat.id;
+    const orderId = shopPendingPhoto.get(chatId);
+    if (!orderId) return; // не ждём фото
+    shopPendingPhoto.delete(chatId);
+
+    try {
+      // Получаем file_url через API Telegram
+      const photo = msg.photo[msg.photo.length - 1]; // самое большое
+      const fileLink = await shopBot.getFileLink(photo.file_id);
+
+      // Скачиваем и загружаем в Supabase storage
+      const https = require('https');
+      const buffer = await new Promise((resolve, reject) => {
+        https.get(fileLink, (resp) => {
+          const chunks = [];
+          resp.on('data', c => chunks.push(c));
+          resp.on('end', () => resolve(Buffer.concat(chunks)));
+          resp.on('error', reject);
+        }).on('error', reject);
+      });
+
+      const { uploadPhoto } = require('../db/supabase');
+      const photoUrl = await uploadPhoto(buffer, `delivery-${orderId}-${Date.now()}.jpg`, 'image/jpeg');
+
+      const db = getDb();
+      const { data: updated } = await db.from('orders')
+        .update({ status: 'ready', delivery_photo_url: photoUrl })
+        .eq('id', orderId)
+        .select()
+        .single();
+
+      const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', chatId).single();
+
+      await shopBot.sendMessage(chatId, `✅ Фото отправлено клиенту. Заказ #${orderId} помечен как «📦 Готов».`, {
+        reply_markup: { inline_keyboard: [[{ text: '🚚 Доставлен', callback_data: `shop_delivered:${orderId}` }]] }
+      });
+
+      try { await notifyCustomerStatusChanged(updated, shop); } catch(e) { console.log('notify customer err:', e.message); }
+    } catch (e) {
+      console.error('[shopBot photo]', e.message);
+      try { await shopBot.sendMessage(chatId, '❌ Не удалось обработать фото: ' + e.message); } catch(_){}
+    }
+  });
+
   // Callbacks: accept / reject orders, mark stages
   shopBot.on('callback_query', async (q) => {
     const data = q.data || '';
+
+    // Refund approval/dispute by shop
+    const mref = data.match(/^shop_refund_(approve|dispute):(.+)$/);
+    if (mref) {
+      const [, refundAction, orderId] = mref;
+      const newStatus = refundAction === 'approve' ? 'refunded' : 'refund_disputed';
+      try {
+        const db = getDb();
+        const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', q.message.chat.id).single();
+        if (!shop) {
+          await shopBot.answerCallbackQuery(q.id, { text: 'Сначала /start', show_alert: true });
+          return;
+        }
+        const { data: updated } = await db.from('orders').update({ status: newStatus }).eq('id', orderId).select().single();
+        await shopBot.answerCallbackQuery(q.id, { text: refundAction === 'approve' ? '✅ Возврат одобрен' : '⚠️ Возврат оспорен' });
+        await shopBot.sendMessage(q.message.chat.id, refundAction === 'approve'
+          ? `✅ Возврат по заказу #${orderId} одобрен. Клиент уведомлён.`
+          : `⚠️ Возврат по заказу #${orderId} оспорен. Администратор разберётся.`);
+        // notify customer
+        if (updated && updated.customer_chat_id) {
+          try {
+            await userBot && userBot.sendMessage(updated.customer_chat_id,
+              refundAction === 'approve'
+                ? `✅ <b>Возврат одобрен</b>\n\nЗаказ #${orderId} — магазин одобрил возврат. Свяжитесь с администратором @rebuket_admin.`
+                : `⚠️ <b>Магазин оспорил возврат</b>\n\nЗаказ #${orderId}. Администратор рассмотрит ваш случай.`,
+              { parse_mode: 'HTML' });
+          } catch(_) {}
+        }
+        try { await notifyAdminAboutShopOrder(updated, shop); } catch(_) {}
+      } catch (e) {
+        console.error('[shopBot refund]', e.message);
+        await shopBot.answerCallbackQuery(q.id, { text: 'Ошибка', show_alert: true });
+      }
+      return;
+    }
+
     const m = data.match(/^shop_(accept|reject|preparing|ready|delivered):(.+)$/);
     if (!m) return;
     const action = m[1];
     const orderId = m[2];
+
+    // Спецслучай: ready — сначала запрашиваем фото
+    if (action === 'ready') {
+      try {
+        const db = getDb();
+        const { data: shop } = await db.from('shops').select('phone').eq('telegram_chat_id', q.message.chat.id).single();
+        if (!shop) {
+          await shopBot.answerCallbackQuery(q.id, { text: 'Сначала /start', show_alert: true });
+          return;
+        }
+        shopPendingPhoto.set(q.message.chat.id, orderId);
+        await shopBot.answerCallbackQuery(q.id, { text: '📸 Отправьте фото готового букета' });
+        await shopBot.sendMessage(q.message.chat.id,
+          `📸 <b>Фото-отчёт по заказу #${orderId}</b>\n\nОтправьте фотографию готового букета — она будет переслана клиенту вместе с уведомлением.\n\n<i>Отмена: /cancel</i>`,
+          { parse_mode: 'HTML' });
+        return;
+      } catch (e) {
+        console.error('[shopBot ready prompt]', e.message);
+      }
+    }
+
     const newStatus = action === 'accept' ? 'seller_accepted'
                     : action === 'reject' ? 'rejected'
                     : action;
@@ -998,7 +1116,9 @@ function initShopBot() {
         return;
       }
 
-      const { data: updated, error } = await db.from('orders').update({ status: newStatus }).eq('id', orderId).select().single();
+      const updateFields = { status: newStatus };
+      if (newStatus === 'delivered') updateFields.delivered_at = new Date().toISOString();
+      const { data: updated, error } = await db.from('orders').update(updateFields).eq('id', orderId).select().single();
       if (error) throw error;
 
       await shopBot.answerCallbackQuery(q.id, { text: labels[newStatus] || 'OK' });
@@ -1009,13 +1129,16 @@ function initShopBot() {
       }
       const nextKb = [];
       if (newStatus === 'seller_accepted') nextKb.push([{ text: '👨‍🍳 Готовим', callback_data: `shop_preparing:${orderId}` }]);
-      if (newStatus === 'preparing') nextKb.push([{ text: '📦 Готов', callback_data: `shop_ready:${orderId}` }]);
+      if (newStatus === 'preparing') nextKb.push([{ text: '📦 Готов (отправить фото)', callback_data: `shop_ready:${orderId}` }]);
       if (newStatus === 'ready') nextKb.push([{ text: '🚚 Доставлен', callback_data: `shop_delivered:${orderId}` }]);
 
       await shopBot.sendMessage(q.message.chat.id, reply, {
         parse_mode: 'HTML',
         reply_markup: nextKb.length ? { inline_keyboard: nextKb } : undefined
       });
+
+      // Уведомление клиента в красивом виде
+      try { await notifyCustomerStatusChanged(updated, shop); } catch (e) { console.log('customer notify err:', e.message); }
 
       try {
         await notifyAdminAboutShopOrder(updated, shop);
@@ -1031,6 +1154,233 @@ function initShopBot() {
   });
 
   console.log('🏪 SHOP BOT запущен');
+}
+
+// ─────────────────────────────────────────────
+// 📲 Красивые уведомления клиенту о смене статуса заказа
+// ─────────────────────────────────────────────
+async function notifyCustomerStatusChanged(order, shop) {
+  if (!userBot || !order || !order.customer_chat_id) return;
+  const shopName = shop?.shop_name || 'Магазин';
+  const orderId = order.id;
+
+  const statusCards = {
+    seller_accepted: {
+      emoji: '🎉',
+      title: 'Магазин принял ваш заказ!',
+      body: `<b>${shopName}</b> начнёт собирать ваш букет.\n\nМы сообщим, когда заказ будет готов.`
+    },
+    preparing: {
+      emoji: '👨‍🍳',
+      title: 'Ваш заказ собирают!',
+      body: `<b>${shopName}</b> уже работает над вашим букетом. 🌸`
+    },
+    rejected: {
+      emoji: '😔',
+      title: 'К сожалению, заказ отклонён',
+      body: `<b>${shopName}</b> не смог принять ваш заказ.\nДеньги будут возвращены — свяжитесь с @rebuket_admin.`
+    }
+  };
+
+  const card = statusCards[order.status];
+  if (card) {
+    const text = `${card.emoji} <b>${card.title}</b>\n\n${card.body}\n\n📦 Заказ #${orderId}\n💰 ${(Number(order.total)||0).toLocaleString('ru')} сом`;
+    try {
+      await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+    } catch (e) { console.log('[notifyCustomer]', e.message); }
+    return;
+  }
+
+  // Ready — отправляем фотоотчёт
+  if (order.status === 'ready') {
+    const text = `📸 <b>Ваш букет готов!</b>\n\n<b>${shopName}</b> прислал фото-отчёт. Заказ скоро будет в пути! 🚚\n\n📦 Заказ #${orderId}`;
+    try {
+      if (order.delivery_photo_url) {
+        await userBot.sendPhoto(order.customer_chat_id, order.delivery_photo_url, { caption: text, parse_mode: 'HTML' });
+      } else {
+        await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+      }
+    } catch (e) { console.log('[notifyCustomer ready]', e.message); }
+    return;
+  }
+
+  // Delivered — кнопки подтверждения / проблемы
+  if (order.status === 'delivered') {
+    const text = `🚚 <b>Ваш заказ доставлен!</b>\n\nПожалуйста, подтвердите получение в течение <b>2 часов</b>. Если не подтвердите — заказ будет автоматически отмечен как полученный.\n\n📦 Заказ #${orderId}\n💐 ${shopName}`;
+    try {
+      const opts = {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '✅ Получил заказ', callback_data: `cust_confirm:${orderId}` },
+            { text: '⚠️ Есть проблема', callback_data: `cust_problem:${orderId}` }
+          ]]
+        }
+      };
+      if (order.delivery_photo_url) {
+        await userBot.sendPhoto(order.customer_chat_id, order.delivery_photo_url, { caption: text, ...opts });
+      } else {
+        await userBot.sendMessage(order.customer_chat_id, text, opts);
+      }
+    } catch (e) { console.log('[notifyCustomer delivered]', e.message); }
+    return;
+  }
+
+  // Refunded
+  if (order.status === 'refunded') {
+    try {
+      await userBot.sendMessage(order.customer_chat_id,
+        `✅ <b>Возврат оформлен</b>\n\nЗаказ #${orderId} — деньги будут возвращены. Свяжитесь с @rebuket_admin для уточнений.`,
+        { parse_mode: 'HTML' });
+    } catch(_) {}
+    return;
+  }
+}
+
+// ─────────────────────────────────────────────
+// 👤 Customer callbacks: подтверждение / проблема
+// ─────────────────────────────────────────────
+function setupCustomerOrderHandlers() {
+  if (!userBot) return;
+
+  userBot.on('callback_query', async (q) => {
+    const data = q.data || '';
+    const m = data.match(/^cust_(confirm|problem):(.+)$/);
+    if (!m) return;
+    const [, action, orderId] = m;
+    const chatId = q.message.chat.id;
+
+    try {
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+
+      if (action === 'confirm') {
+        const { data: updated } = await db.from('orders')
+          .update({ status: 'confirmed_received', confirmed_at: new Date().toISOString() })
+          .eq('id', orderId).eq('customer_chat_id', chatId)
+          .select().single();
+        if (!updated) {
+          await userBot.answerCallbackQuery(q.id, { text: 'Заказ не найден', show_alert: true });
+          return;
+        }
+        await userBot.answerCallbackQuery(q.id, { text: '✅ Спасибо!' });
+        await userBot.sendMessage(chatId, `🌟 <b>Спасибо за заказ!</b>\n\nНадеемся, букет вам понравился! Оставьте отзыв @rebuket_admin.`, { parse_mode: 'HTML' });
+
+        // Notify shop
+        try {
+          let items = updated.items;
+          if (typeof items === 'string') items = JSON.parse(items);
+          const sellerPhones = [...new Set((items||[]).map(it => it.seller_phone).filter(Boolean))];
+          const { data: shops } = await db.from('shops').select('telegram_chat_id, shop_name').in('phone', sellerPhones);
+          for (const s of shops || []) {
+            if (s.telegram_chat_id && shopBot) {
+              await shopBot.sendMessage(s.telegram_chat_id, `🌟 Клиент подтвердил получение заказа #${orderId}!`).catch(_=>{});
+            }
+          }
+        } catch(_){}
+      } else if (action === 'problem') {
+        // Запрашиваем причину
+        customerPendingRefundReason.set(chatId, orderId);
+        await userBot.answerCallbackQuery(q.id, { text: 'Опишите проблему' });
+        await userBot.sendMessage(chatId,
+          `⚠️ <b>Опишите проблему с заказом #${orderId}</b>\n\nНапишите одним сообщением — что не так? Можете прикрепить фото следующим сообщением.\n\nПосле этого магазин рассмотрит запрос на возврат.\n\n<i>Отмена: /cancel</i>`,
+          { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      console.error('[userBot order callback]', e.message);
+      try { await userBot.answerCallbackQuery(q.id, { text: 'Ошибка', show_alert: true }); } catch(_){}
+    }
+  });
+
+  // /cancel для customer refund flow
+  userBot.onText(/\/cancel/, async (msg) => {
+    if (customerPendingRefundReason.has(msg.chat.id)) {
+      customerPendingRefundReason.delete(msg.chat.id);
+      await userBot.sendMessage(msg.chat.id, '↩️ Запрос на возврат отменён.');
+    }
+  });
+
+  // Текст-сообщение от клиента, ожидающего ввода причины
+  userBot.on('message', async (msg) => {
+    if (!msg.text || msg.text.startsWith('/')) return;
+    const chatId = msg.chat.id;
+    const orderId = customerPendingRefundReason.get(chatId);
+    if (!orderId) return;
+    customerPendingRefundReason.delete(chatId);
+
+    try {
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      const reason = msg.text.trim().slice(0, 1000);
+
+      const { data: updated } = await db.from('orders')
+        .update({ status: 'refund_requested', refund_reason: reason })
+        .eq('id', orderId).eq('customer_chat_id', chatId)
+        .select().single();
+      if (!updated) {
+        await userBot.sendMessage(chatId, '❌ Заказ не найден.');
+        return;
+      }
+      await userBot.sendMessage(chatId, `✅ <b>Запрос на возврат отправлен</b>\n\nМагазин рассмотрит ваше обращение и свяжется с админом.\n\n📦 Заказ #${orderId}\n📝 Причина: ${reason}`, { parse_mode: 'HTML' });
+
+      // Notify shop with reason + approve/dispute buttons
+      try {
+        let items = updated.items;
+        if (typeof items === 'string') items = JSON.parse(items);
+        const sellerPhones = [...new Set((items||[]).map(it => it.seller_phone).filter(Boolean))];
+        const { data: shops } = await db.from('shops').select('telegram_chat_id, shop_name, phone').in('phone', sellerPhones);
+        const shopText = `⚠️ <b>Запрос на возврат от клиента</b>\n\n📦 Заказ #${orderId}\n💰 ${(Number(updated.total)||0).toLocaleString('ru')} сом\n\n📝 <b>Причина:</b>\n${reason}\n\nПосле одобрения возврата клиент получит деньги обратно, а вы — товар.`;
+        for (const s of shops || []) {
+          if (s.telegram_chat_id && shopBot) {
+            await shopBot.sendMessage(s.telegram_chat_id, shopText, {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '✅ Одобрить возврат', callback_data: `shop_refund_approve:${orderId}` },
+                  { text: '⚠️ Оспорить',         callback_data: `shop_refund_dispute:${orderId}` }
+                ]]
+              }
+            }).catch(_=>{});
+          }
+        }
+      } catch(e) { console.log('refund notify shop err:', e.message); }
+
+      // Also notify admin
+      try {
+        for (const adminChat of adminChatIds) {
+          if (adminBot) await adminBot.sendMessage(adminChat, `⚠️ Возврат запрошен: заказ #${orderId}\nПричина: ${reason}`).catch(_=>{});
+        }
+      } catch(_){}
+    } catch (e) {
+      console.error('[userBot refund reason]', e.message);
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// ⏱ Авто-подтверждение получения через 2 часа после доставки
+// ─────────────────────────────────────────────
+function startAutoConfirmInterval() {
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  setInterval(async () => {
+    try {
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      const cutoff = new Date(Date.now() - TWO_HOURS_MS).toISOString();
+      const { data: orders } = await db.from('orders')
+        .select('id, customer_chat_id')
+        .eq('status', 'delivered')
+        .lt('delivered_at', cutoff)
+        .limit(50);
+      for (const o of orders || []) {
+        await db.from('orders').update({ status: 'confirmed_received', confirmed_at: new Date().toISOString() }).eq('id', o.id);
+        if (o.customer_chat_id && userBot) {
+          await userBot.sendMessage(o.customer_chat_id, `✅ Заказ #${o.id} автоматически подтверждён (прошло 2 часа). Спасибо за покупку!`).catch(_=>{});
+        }
+      }
+    } catch (e) { console.log('[auto-confirm interval]', e.message); }
+  }, 10 * 60 * 1000); // каждые 10 минут
+  console.log('⏱ Auto-confirm interval запущен (каждые 10 мин)');
 }
 
 module.exports = {
