@@ -1433,9 +1433,9 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <input type="tel" id="checkout-phone" placeholder="+992 900 000000">
         </div>
         <div class="form-group">
-          <label>Ваш Telegram (необязательно)</label>
-          <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem">
-          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Для получения уведомлений о статусе заказа</small>
+          <label>Ваш Telegram *</label>
+          <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem" required>
+          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Обязательно для получения уведомлений о статусе заказа</small>
         </div>
         <div class="form-group checkout-address-group">
           <label>Ваш адрес *</label>
@@ -2177,12 +2177,13 @@ window.toggleAnotherPerson = () => {
 window.goToCheckoutStep2 = () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
+  const telegram = document.getElementById('checkout-telegram').value.trim();
   const address = document.getElementById('checkout-address').value.trim();
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !phone || !address) {
+  if (!name || !phone || !telegram || !address) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните имя, телефон и адрес';
+    msgEl.textContent = 'Заполните имя, телефон, Telegram и адрес';
     return;
   }
   
@@ -2404,10 +2405,8 @@ window.completeCheckout = async () => {
     if (tgUid) fd.append('customer_chat_id', String(tgUid));
   } catch(_) {}
   
-  // Telegram username (optional)
-  if (telegram) {
-    fd.append('customer_telegram', telegram);
-  }
+  // Telegram username is now required
+  fd.append('customer_telegram', telegram);
   
   // Fast order and delivery time
   if (fastOrder) {
