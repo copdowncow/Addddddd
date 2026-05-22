@@ -1289,6 +1289,29 @@ function initShopBot() {
 // ─────────────────────────────────────────────
 // ✅ Уведомление клиенту: оплата подтверждена
 // ─────────────────────────────────────────────
+async function resolveCustomerChatId(order) {
+  if (!order) return null;
+  if (order.customer_chat_id) return order.customer_chat_id;
+
+  const resolved = await resolveChatId({
+    phone: order.customer_phone,
+    username: order.customer_telegram,
+    chatId: order.customer_chat_id
+  });
+  if (!resolved) return null;
+
+  try {
+    const { createSupabaseClient } = require('../db/supabase');
+    const db = createSupabaseClient();
+    await db.from('orders').update({ customer_chat_id: resolved }).eq('id', order.id);
+    console.log('[resolveCustomerChatId] Patched customer_chat_id for order', order.id, '->', resolved);
+  } catch (e) {
+    console.error('[resolveCustomerChatId] DB patch failed:', e.message);
+  }
+
+  return resolved;
+}
+
 async function notifyCustomerPaymentConfirmed(order) {
   if (!userBot && !ensureUserBot()) { console.error('[notifyCustomerPaymentConfirmed] no userBot'); return; }
   if (!order) return;
@@ -1298,8 +1321,7 @@ async function notifyCustomerPaymentConfirmed(order) {
     return;
   }
 
-  // Прямо используем chat_id из заказа (должен быть из Mini App)
-  const chatId = order.customer_chat_id;
+  const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
     console.log('[notifyCustomerPaymentConfirmed] No chat_id in order', order.id);
     return;
@@ -1325,8 +1347,7 @@ async function notifyCustomerPaymentRejected(order) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
 
-  // Прямо используем chat_id из заказа (должен быть из Mini App)
-  const chatId = order.customer_chat_id;
+  const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
     console.log('[notifyCustomerPaymentRejected] no chat_id for order', order.id);
     return;
@@ -1339,6 +1360,7 @@ async function notifyCustomerPaymentRejected(order) {
 
   try {
     await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+    console.log('[notifyCustomerPaymentRejected] Sent to:', chatId);
   } catch (e) {
     console.log('[notifyCustomerPaymentRejected]', e.message);
   }
@@ -1351,8 +1373,7 @@ async function notifyCustomerStatusChanged(order, shop) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
 
-  // Прямо используем chat_id из заказа (должен быть из Mini App)
-  const chatId = order.customer_chat_id;
+  const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
     console.log('[notifyCustomerStatusChanged] no chat_id for order', order.id);
     return;
