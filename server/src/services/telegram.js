@@ -24,13 +24,63 @@ const customerPendingRefundReason = new Map();
 
 const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
 
-// In-memory map for username -> chat_id (for testing, should be moved to database)
+// In-memory map for username -> chat_id (fallback, primary is database)
 const usernameToChatId = new Map();
 
 // Normalize username: remove @, trim, lowercase
 function normalizeUsername(username) {
   if (!username) return null;
   return username.toString().replace('@', '').trim().toLowerCase();
+}
+
+// Save username->chat_id mapping to database
+async function saveUsernameMapping(username, chatId) {
+  try {
+    const { createSupabaseClient } = require('../db/supabase');
+    const db = createSupabaseClient();
+    const normalizedUsername = normalizeUsername(username);
+    
+    const { error } = await db
+      .from('telegram_users')
+      .upsert({ username: normalizedUsername, chat_id: chatId }, { onConflict: 'username' });
+    
+    if (error) {
+      console.error('[saveUsernameMapping] Error saving to database:', error.message);
+      return false;
+    }
+    
+    console.log('[saveUsernameMapping] Saved to database:', normalizedUsername, '->', chatId);
+    return true;
+  } catch (e) {
+    console.error('[saveUsernameMapping] Exception:', e.message);
+    return false;
+  }
+}
+
+// Get chat_id by username from database
+async function getChatIdByUsername(username) {
+  try {
+    const { createSupabaseClient } = require('../db/supabase');
+    const db = createSupabaseClient();
+    const normalizedUsername = normalizeUsername(username);
+    
+    const { data, error } = await db
+      .from('telegram_users')
+      .select('chat_id')
+      .eq('username', normalizedUsername)
+      .single();
+    
+    if (error || !data) {
+      console.log('[getChatIdByUsername] Not found in database:', normalizedUsername);
+      return null;
+    }
+    
+    console.log('[getChatIdByUsername] Found in database:', normalizedUsername, '->', data.chat_id);
+    return data.chat_id;
+  } catch (e) {
+    console.error('[getChatIdByUsername] Exception:', e.message);
+    return null;
+  }
 }
 
 function getMiniAppUrl() {
@@ -407,9 +457,11 @@ function initUserBot() {
     // Auto-register username if available
     if (username) {
       const cleanUsername = normalizeUsername(username);
+      // Save to in-memory map (fallback)
       usernameToChatId.set(cleanUsername, chatId);
+      // Save to database (persistent)
+      await saveUsernameMapping(cleanUsername, chatId);
       console.log('[bot /start] Auto-registered username:', cleanUsername, '-> chat_id:', chatId);
-      console.log('[bot /start] Current username map size:', usernameToChatId.size);
     } else {
       console.log('[bot /start] No username available for auto-registration');
     }
@@ -479,8 +531,10 @@ function initUserBot() {
     const username = normalizeUsername(match[1]);
     const chatId = msg.chat.id;
     
-    // Save mapping
+    // Save to in-memory map (fallback)
     usernameToChatId.set(username, chatId);
+    // Save to database (persistent)
+    await saveUsernameMapping(username, chatId);
     console.log('[/register] Registered username:', username, '-> chat_id:', chatId);
     
     await userBot.sendMessage(msg.chat.id,
@@ -1413,19 +1467,28 @@ async function notifyCustomerPaymentConfirmed(order) {
     }
   }
 
-  // Fallback 2: try to find chat_id by username from registered users
+  // Fallback 2: try to find chat_id by username from database
   if (!chatId && order.customer_telegram) {
     console.log('[notifyCustomerPaymentConfirmed] Trying to find chat_id by username:', order.customer_telegram);
     const username = normalizeUsername(order.customer_telegram);
     console.log('[notifyCustomerPaymentConfirmed] Normalized username:', username);
-    console.log('[notifyCustomerPaymentConfirmed] Username map keys:', Array.from(usernameToChatId.keys()));
-    console.log('[notifyCustomerPaymentConfirmed] Looking for:', username);
-    chatId = usernameToChatId.get(username);
+    
+    // Try database first (persistent)
+    chatId = await getChatIdByUsername(username);
     if (chatId) {
-      foundVia = 'username_map';
-      console.log('[notifyCustomerPaymentConfirmed] Found chat_id from username map:', chatId);
+      foundVia = 'username_database';
+      console.log('[notifyCustomerPaymentConfirmed] Found chat_id from database:', chatId);
     } else {
-      console.log('[notifyCustomerPaymentConfirmed] Username not found in map');
+      // Fallback to in-memory map
+      console.log('[notifyCustomerPaymentConfirmed] Not found in database, trying in-memory map');
+      console.log('[notifyCustomerPaymentConfirmed] Username map keys:', Array.from(usernameToChatId.keys()));
+      chatId = usernameToChatId.get(username);
+      if (chatId) {
+        foundVia = 'username_map';
+        console.log('[notifyCustomerPaymentConfirmed] Found chat_id from in-memory map:', chatId);
+      } else {
+        console.log('[notifyCustomerPaymentConfirmed] Username not found anywhere');
+      }
     }
   }
 
