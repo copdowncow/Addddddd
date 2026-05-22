@@ -388,26 +388,26 @@ function initUserBot() {
 
     await userBot.sendMessage(msg.chat.id,
       `🌸 <b>Привет, ${escHtml(name)}!</b>\n\nДобро пожаловать в <b>ReBuket</b> — маркетплейс букетов и сладостей в Таджикистане.\n\n💐 <b>Купить</b> — просматривать букеты, корзины, игрушки и сладости\n🛍 <b>Продать</b> — разместить своё объявление\n📩 <b>Связаться</b> — оставить заявку продавцу\n\n👇 Нажмите кнопку ниже чтобы открыть каталог:`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: appUrl } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
     );
   });
 
   userBot.onText(/\/catalog/, async (msg) => {
     await userBot.sendMessage(msg.chat.id, `💐 <b>Каталог ReBuket</b>\n\nБукеты, корзины, игрушки и сладости:`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '💐 Смотреть каталог', web_app: { url: getMiniAppUrl() + '#catalog' } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '💐 Смотреть каталог', url: getMiniAppUrl() + '#catalog' }]] } }
     );
   });
 
   userBot.onText(/\/sell/, async (msg) => {
     await userBot.sendMessage(msg.chat.id, `🛍 <b>Разместить объявление</b>\n\nПродайте букеты или сладости через ReBuket!`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить объявление', web_app: { url: getMiniAppUrl() + '#sell' } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить объявление', url: getMiniAppUrl() + '#sell' }]] } }
     );
   });
 
   userBot.onText(/\/help/, async (msg) => {
     await userBot.sendMessage(msg.chat.id,
       `🌸 <b>ReBuket — помощь</b>\n\n/start   — запустить бота\n/catalog — каталог\n/sell    — разместить объявление\n/help    — эта справка`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
     );
   });
 
@@ -452,7 +452,7 @@ function initUserBot() {
 
     // Fallback — open mini-app
     await userBot.sendMessage(msg.chat.id, `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
-      { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] } }
+      { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
     );
   });
 
@@ -694,7 +694,7 @@ async function notifySellerApproved(p) {
   try {
     await userBot.sendMessage(p.seller_chat_id,
       `🎉 <b>Ваше объявление одобрено!</b>\n\n📦 <b>${escHtml(p.title)}</b>\n💰 ${p.price} TJS · 📍 ${escHtml(p.city)}\n\nТеперь его видят все покупатели. Удачных продаж! 🌸`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть моё объявление', web_app: { url } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть моё объявление', url }]] } }
     );
 
     if (p.channel_message_id && p.channel_name && userBot) {
@@ -722,7 +722,7 @@ async function notifySellerRejected(p) {
   try {
     await userBot.sendMessage(p.seller_chat_id,
       `❌ <b>Ваше объявление отклонено</b>\n\n📦 <b>${escHtml(p.title)}</b>\n\nК сожалению, объявление не прошло модерацию.\nВы можете разместить новое объявление:`,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить новое', web_app: { url: getMiniAppUrl() + '#sell' } }]] } }
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '➕ Разместить новое', url: getMiniAppUrl() + '#sell' }]] } }
     );
   } catch(e) {
     console.log('Не удалось уведомить продавца:', e.message);
@@ -825,7 +825,7 @@ async function notifyShopApproved(shop) {
       `📞 Телефон для входа: ${escHtml(shop.phone)}`,
       {
         parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [[{ text: '🏪 Открыть ReBuket', web_app: { url: getMiniAppUrl() } }]] }
+        reply_markup: { inline_keyboard: [[{ text: '🏪 Открыть ReBuket', url: getMiniAppUrl() }]] }
       }
     );
   } catch(e) {
