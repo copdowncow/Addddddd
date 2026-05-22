@@ -28,6 +28,25 @@ function getMiniAppUrl() {
   return (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
 }
 
+// Lazily create userBot if it was not started (e.g. missing token at startup)
+function ensureUserBot() {
+  if (userBot) return true;
+  const token = process.env.BOT_TOKEN_USER;
+  if (!token) {
+    console.log('[ensureUserBot] BOT_TOKEN_USER is missing');
+    return false;
+  }
+  try {
+    // No polling here to avoid double polling; just for sendMessage fallback
+    userBot = new TG(token, { polling: false });
+    console.log('[ensureUserBot] userBot lazily initialized for sending');
+    return true;
+  } catch (e) {
+    console.error('[ensureUserBot] failed to init userBot:', e.message);
+    return false;
+  }
+}
+
 async function notifyAdminAboutOrder(order) {
   console.log('[notifyAdminAboutOrder] Called with order:', order.id);
   console.log('[notifyAdminAboutOrder] adminBot exists:', !!adminBot);
@@ -62,6 +81,9 @@ async function notifyAdminAboutOrder(order) {
   const adminUrl = `${getMiniAppUrl()}/#admin`;
   
   let message = `🛒 <b>НОВЫЙ ЗАКАЗ #${order.id}</b>\n\n`;
+  if (order.customer_name) {
+    message += `👤 Имя: ${order.customer_name}\n`;
+  }
   message += `📞 Телефон: ${order.customer_phone}\n`;
   message += `📍 Адрес: ${order.customer_address}\n`;
   message += `🚚 Доставка: ${deliveryLabel}\n`;
@@ -1303,7 +1325,7 @@ function initShopBot() {
 // ─────────────────────────────────────────────
 async function notifyCustomerPaymentConfirmed(order) {
   console.log('[notifyCustomerPaymentConfirmed] called for order', order?.id, 'customer_chat_id:', order?.customer_chat_id);
-  if (!userBot) { console.log('[notifyCustomerPaymentConfirmed] userBot is null — skipping'); return; }
+  if (!userBot && !ensureUserBot()) { console.log('[notifyCustomerPaymentConfirmed] userBot is null — skipping'); return; }
   if (!order) { console.log('[notifyCustomerPaymentConfirmed] order is null — skipping'); return; }
   if (!order.customer_chat_id) {
     console.log('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id);
@@ -1331,7 +1353,7 @@ async function notifyCustomerStatusChanged(order, shop) {
   console.log('[notifyCustomer] called for order', order?.id, 'status:', order?.status,
               'customer_chat_id:', order?.customer_chat_id,
               'delivery_photo_url:', order?.delivery_photo_url ? 'yes' : 'no');
-  if (!userBot) { console.log('[notifyCustomer] userBot is null — skipping'); return; }
+  if (!userBot && !ensureUserBot()) { console.log('[notifyCustomer] userBot is null — skipping'); return; }
   if (!order) { console.log('[notifyCustomer] order is null — skipping'); return; }
   if (!order.customer_chat_id) {
     console.log('[notifyCustomer] customer_chat_id missing for order', order.id,

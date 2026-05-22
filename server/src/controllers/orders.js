@@ -27,6 +27,7 @@ exports.createOrder = async (req, res) => {
   try {
     const {
       customer_phone,
+      customer_name,
       customer_address,
       delivery_type,
       delivery_payer,        // 'buyer' | 'fixed' (only meaningful for delivery_type=taxi)
@@ -160,6 +161,7 @@ exports.createOrder = async (req, res) => {
     const { data, error } = await getClient()
       .from('orders')
       .insert({
+        customer_name: customer_name || null,
         customer_phone,
         customer_address,
         delivery_type,

@@ -1411,20 +1411,34 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     <button class="modal-x" onclick="closeModal('checkout-modal')">✕</button>
     <div style="font-size:2.4rem;margin-bottom:10px;text-align:center">🛒</div>
     <h3 style="text-align:center;margin-bottom:4px">Оформление заказа</h3>
-    <p style="color:var(--gray);font-size:.83rem;text-align:center;margin-bottom:24px">Заполните данные для доставки</p>
+    <p style="color:var(--gray);font-size:.83rem;text-align:center;margin-bottom:18px">Заполните данные для доставки</p>
     
     <!-- Step 1: Customer Info -->
     <div id="checkout-step-1">
-      <div class="form-group" style="margin-bottom:14px">
-        <label>Ваш номер телефона *</label>
-        <input type="tel" id="checkout-phone" placeholder="+992 900 000000">
+      <div class="checkout-intro">
+        <div class="checkout-intro-icon">👤</div>
+        <div>
+          <div class="checkout-intro-title">Данные покупателя</div>
+          <div class="checkout-intro-sub">Имя, телефон и адрес помогут быстрее обработать заказ</div>
+        </div>
       </div>
-      <div class="form-group" style="margin-bottom:14px">
-        <label>Ваш адрес *</label>
-        <input type="text" id="checkout-address" placeholder="ул. Рудаки, 12">
+
+      <div class="checkout-fields">
+        <div class="form-group">
+          <label>Ваше имя *</label>
+          <input type="text" id="checkout-name" placeholder="Алина">
+        </div>
+        <div class="form-group">
+          <label>Ваш номер телефона *</label>
+          <input type="tel" id="checkout-phone" placeholder="+992 900 000000">
+        </div>
+        <div class="form-group checkout-address-group">
+          <label>Ваш адрес *</label>
+          <input type="text" id="checkout-address" placeholder="ул. Рудаки, 12">
+        </div>
       </div>
       
-      <div class="form-group" style="margin-bottom:20px;background:var(--warm);padding:16px;border-radius:14px;border:1.5px solid var(--border)">
+      <div class="checkout-recipient-card">
         <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px">
           <input type="checkbox" id="checkout-another-person" onchange="toggleAnotherPerson()" style="width:18px;height:18px">
           <span style="font-weight:600;font-size:.9rem">Заказ получит другой человек</span>
@@ -2061,6 +2075,17 @@ window.cartCheckout = () => {
   // Then open checkout modal
   document.getElementById('checkout-modal').classList.add('open');
   resetCheckoutForm();
+  prefillCheckoutForm();
+};
+
+window.prefillCheckoutForm = () => {
+  const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+  const nameEl = document.getElementById('checkout-name');
+  if (!nameEl || !tgUser) return;
+  const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ').trim();
+  if (fullName && !nameEl.value.trim()) {
+    nameEl.value = fullName;
+  }
 };
 
 window.toggleAnotherPerson = () => {
@@ -2070,13 +2095,14 @@ window.toggleAnotherPerson = () => {
 };
 
 window.goToCheckoutStep2 = () => {
+  const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
   const address = document.getElementById('checkout-address').value.trim();
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!phone || !address) {
+  if (!name || !phone || !address) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните телефон и адрес';
+    msgEl.textContent = 'Заполните имя, телефон и адрес';
     return;
   }
   
@@ -2153,6 +2179,7 @@ window.goToCheckoutStep3 = () => {
 };
 
 window.resetCheckoutForm = () => {
+  document.getElementById('checkout-name').value = '';
   document.getElementById('checkout-phone').value = '';
   document.getElementById('checkout-address').value = '';
   document.getElementById('checkout-another-person').checked = false;
@@ -2202,6 +2229,7 @@ window.previewReceipt = (event) => {
 };
 
 window.completeCheckout = async () => {
+  const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
   const address = document.getElementById('checkout-address').value.trim();
   const anotherPerson = document.getElementById('checkout-another-person').checked;
@@ -2212,9 +2240,9 @@ window.completeCheckout = async () => {
   const receiptFile = window.checkoutReceiptFile;
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!delivery) {
+  if (!name || !delivery) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Выберите способ доставки';
+    msgEl.textContent = !name ? 'Введите имя покупателя' : 'Выберите способ доставки';
     return;
   }
   
@@ -2227,6 +2255,7 @@ window.completeCheckout = async () => {
   const total = window._cart.reduce((s,i) => s + (i.price||0), 0);
   
   const fd = new FormData();
+  fd.append('customer_name', name);
   fd.append('customer_phone', phone);
   fd.append('customer_address', address);
   fd.append('delivery_type', delivery);

@@ -775,7 +775,8 @@ async function renderOrders() {
               ${o.chat_active ? '<span style="font-size:.7rem;background:rgba(34,160,91,.12);color:var(--green-d);padding:2px 8px;border-radius:999px;font-weight:600">💬 Чат активен</span>' : ''}
             </div>
             <div class="acard-title">Заказ #${o.id}</div>
-            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">📞 ${esc(o.customer_phone)}</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${esc(o.customer_name || '—')}</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">�📞 ${esc(o.customer_phone)}</div>
             <div style="font-size:.78rem;color:var(--gray)">📍 ${esc(o.customer_address)}</div>
             <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}${o.delivery_payer ? ' · ' + (payerLabel[o.delivery_payer] || o.delivery_payer) : ''}</div>
             <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${fmt(o.total)} сом.</div>

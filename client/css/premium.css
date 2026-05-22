@@ -172,6 +172,88 @@
 #shop-admin-login button {
   font-size: .95rem;
 }
+
+/* Checkout form polish */
+.checkout-intro {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(34,160,91,.08), rgba(34,160,91,.04));
+  border: 1px solid rgba(34,160,91,.16);
+  margin-bottom: 16px;
+}
+.checkout-intro-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1.5rem;
+  box-shadow: var(--p-shadow-sm);
+  flex-shrink: 0;
+}
+.checkout-intro-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 1rem;
+  color: var(--black, #0f1117);
+  margin-bottom: 3px;
+}
+.checkout-intro-sub {
+  font-size: .82rem;
+  color: var(--gray, #5b6471);
+  line-height: 1.45;
+}
+.checkout-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.checkout-fields .form-group { margin-bottom: 0 !important; }
+.checkout-address-group { grid-column: 1 / -1; }
+.checkout-fields input,
+.checkout-recipient-card input {
+  width: 100%;
+  border: 1.5px solid rgba(15,17,23,.10);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: .92rem;
+  outline: none;
+  transition: border-color .15s var(--p-ease), box-shadow .15s var(--p-ease), transform .12s var(--p-ease);
+  background: #fff;
+}
+.checkout-fields input:focus,
+.checkout-recipient-card input:focus {
+  border-color: var(--green, #22a05b);
+  box-shadow: 0 0 0 4px rgba(34,160,91,.12);
+}
+.checkout-fields label,
+.checkout-recipient-card label {
+  display: block;
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--mid, #2c333d);
+  margin-bottom: 6px;
+}
+.checkout-recipient-card {
+  margin: 18px 0 20px;
+  background: #fff;
+  border: 1px solid rgba(15,17,23,.08);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: var(--p-shadow-sm);
+}
+.checkout-recipient-card label[style*="cursor:pointer"] {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin-bottom: 14px !important;
+}
+#another-person-fields { padding-top: 4px; }
+#another-person-fields .form-group:last-child { margin-bottom: 0 !important; }
 #shop-admin-dash .a-hdr {
   padding: 24px 28px;
 }
@@ -197,6 +279,14 @@
     align-items: flex-start;
   }
   #shop-admin-dash { padding: 18px; }
+  .checkout-fields { grid-template-columns: 1fr; }
+  .checkout-intro { padding: 14px; gap: 12px; }
+  .checkout-intro-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    font-size: 1.3rem;
+  }
 }
 
 /* Stats cards in admin */
