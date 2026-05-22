@@ -1493,8 +1493,22 @@ async function notifyCustomerPaymentConfirmed(order) {
   }
 
   if (!chatId) {
-    console.error('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id, '- skipping notification');
+    console.error('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id, '- trying direct username send');
     console.error('[notifyCustomerPaymentConfirmed] Customer phone:', order.customer_phone, 'telegram:', order.customer_telegram || 'not provided');
+    
+    // Fallback: try to send directly to username if available
+    if (order.customer_telegram && userBot) {
+      try {
+        const username = order.customer_telegram.replace('@', '').trim();
+        console.log('[notifyCustomerPaymentConfirmed] Trying to send directly to username:', username);
+        
+        await userBot.sendMessage(username, text, { parse_mode: 'HTML' });
+        console.log('[notifyCustomerPaymentConfirmed] Successfully sent to username:', username);
+        return; // Success, no need to notify admin
+      } catch (e) {
+        console.error('[notifyCustomerPaymentConfirmed] Failed to send to username:', e.message);
+      }
+    }
     
     // Notify admin about missing chat_id with clear action items
     try {
@@ -1513,7 +1527,7 @@ async function notifyCustomerPaymentConfirmed(order) {
         `1. Позвоните клиенту: ${order.customer_phone}\n` +
         `2. Напишите в Telegram: ${order.customer_telegram || 'не указан'}\n` +
         `3. Сообщите: "Оплата подтверждена, магазин начинает сборку"\n\n` +
-        `💡 <b>Совет:</b> В будущем просите клиентов открывать заказ через Telegram Mini App (@ReBuketTj_Bot) для автоматических уведомлений.`
+        `💡 <b>Совет:</b> В будущем просите клиентов открывать заказ через Telegram Mini App (@RebuketTj_Bot) для автоматических уведомлений.`
       );
     } catch (e) {
       console.error('[notifyCustomerPaymentConfirmed] Failed to notify admin about missing chat_id:', e.message);
