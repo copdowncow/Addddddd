@@ -1683,15 +1683,19 @@ function shouldSendNotification(orderId, type) {
 
 async function activateOrderChatFlow(order) {
   if (!order?.id) return;
+  if (!userBot && !ensureUserBot()) {
+    console.error('[activateOrderChatFlow] userBot unavailable');
+    return;
+  }
 
   try { await Chat.activateOrderChat(order.id); } catch (e) { console.error('[activateOrderChatFlow] activate:', e.message); }
   try {
     await Chat.persistMessage({ order_id: order.id, sender: 'system', text: 'Оплата подтверждена. Чат с магазином активирован.' });
   } catch (e) { console.error('[activateOrderChatFlow] persist:', e.message); }
 
-  // Прямо используем chat_id из заказа (должен быть из Mini App)
-  const customerChatId = order.customer_chat_id;
+  const customerChatId = await resolveCustomerChatId(order);
   if (customerChatId) {
+    order.customer_chat_id = customerChatId;
     try {
       await Chat.setActiveChat(customerChatId, 'customer', order.id, null);
     } catch (e) { console.error('[activateOrderChatFlow] setActiveChat customer:', e.message); }
@@ -1724,13 +1728,14 @@ async function activateOrderChatFlow(order) {
   }
 
   // Only send customer notification if not already sent recently
-  if (customerChatId && userBot && shouldSendNotification(order.id, 'chat_open_customer:' + customerChatId)) {
+  if (customerChatId && userBot && shouldSendNotification(order.id, 'customer_payment_confirmed')) {
     try {
       await userBot.sendMessage(customerChatId,
-        `✅ <b>Оплата подтверждена!</b>\n\n` +
-        `📦 Заказ #${order.id}\n` +
+        `✅ <b>Чек подтверждён!</b>\n\n` +
+        `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
+        `Магазин получил уведомление и начинает сборку.\n\n` +
         `💰 Сумма: ${(Number(order.total)||0).toLocaleString('ru')} сом\n\n` +
-        `💬 <b>Чат с магазином открыт.</b>\nПросто пишите сообщения сюда — они передаются магазину анонимно.\n\n` +
+        `💬 <b>Чат с магазином открыт.</b>\nПишите сообщения сюда — они передаются магазину анонимно.\n\n` +
         `<i>/endchat — выйти из чата</i>`,
         { parse_mode: 'HTML' }
       );
@@ -1739,8 +1744,14 @@ async function activateOrderChatFlow(order) {
 }
 
 async function relayShopToCustomer(order, msg) {
-  if (!userBot || !order?.customer_chat_id || !msg?.text) return;
-  await userBot.sendMessage(order.customer_chat_id, '💬 <b>Магазин:</b>\n' + escHtml(msg.text), { parse_mode: 'HTML' });
+  if (!userBot && !ensureUserBot()) return;
+  if (!msg?.text) return;
+  const chatId = await resolveCustomerChatId(order);
+  if (!chatId) {
+    console.log('[relayShopToCustomer] no chat_id for order', order?.id);
+    return;
+  }
+  await userBot.sendMessage(chatId, '💬 <b>Магазин:</b>\n' + escHtml(msg.text), { parse_mode: 'HTML' });
 }
 
 async function notifyCustomerRaw(chatId, html) {
