@@ -1319,21 +1319,8 @@ async function notifyCustomerPaymentConfirmed(order) {
   });
 
   if (!chatId) {
-    // Уведомляем админа что клиент не получит сообщение
-    const telegramInfo = order.customer_telegram
-      ? `\n📱 Telegram: ${order.customer_telegram}`
-      : '\n📱 Telegram: не указан';
-    await sendToAdmins(
-      `⚠️ <b>КЛИЕНТ НЕ ПОЛУЧИТ УВЕДОМЛЕНИЕ</b>\n\n` +
-      `📦 Заказ #${order.id}\n` +
-      `📞 Телефон: ${order.customer_phone}\n` +
-      `${telegramInfo}\n` +
-      `💰 Сумма: ${(Number(order.total)||0).toLocaleString('ru')} сом\n\n` +
-      `❌ Клиент не открыл бота перед заказом. Свяжитесь вручную:\n` +
-      `1. Позвоните: ${order.customer_phone}\n` +
-      `2. Напишите в Telegram: ${order.customer_telegram || 'не указан'}\n` +
-      `3. Сообщите: "Оплата подтверждена, магазин начинает сборку"`
-    );
+    // No chat_id available, silently skip notification
+    console.log('[notifyCustomerPaymentConfirmed] No chat_id for order', order.id, '- skipping notification');
     return;
   }
 
