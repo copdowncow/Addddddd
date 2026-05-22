@@ -1433,9 +1433,9 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <input type="tel" id="checkout-phone" placeholder="+992 900 000000">
         </div>
         <div class="form-group">
-          <label>Ваш Telegram (необязательно)</label>
-          <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem">
-          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Для получения уведомлений о статусе заказа в Telegram</small>
+          <label>Ваш Telegram *</label>
+          <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem" required>
+          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Обязательно для получения уведомлений о статусе заказа</small>
         </div>
         <div class="form-group checkout-address-group">
           <label>Ваш адрес *</label>
@@ -1473,7 +1473,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         <small style="color:var(--gray);font-size:.75rem;display:block;margin-bottom:12px">Срочный заказ - доставка в приоритете</small>
         
         <div class="form-group">
-          <label>Желаемое время доставки</label>
+          <label id="delivery-time-label">Желаемое время доставки</label>
           <select id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
             <option value="">Выберите время</option>
             <option value="1 час">1 час</option>
@@ -2109,8 +2109,17 @@ window.addToCart = (item) => {
     saveCart();
     toast('🛒 Добавлено в корзину', 'success');
   }
+  
+  // Update delivery time label if checkout modal is open
+  updateDeliveryTimeLabel();
 };
-window.clearCart = () => { window._cart = []; saveCart(); };
+window.clearCart = () => { 
+  window._cart = []; 
+  saveCart();
+  // Reset delivery time label
+  const labelEl = document.getElementById('delivery-time-label');
+  if (labelEl) labelEl.textContent = 'Желаемое время доставки';
+};
 window.clearCartConfirm = () => {
   if (window._cart.length === 0) return;
   if (confirm('Очистить всю корзину?')) { window.clearCart(); toast('Корзина очищена'); }
@@ -2131,6 +2140,22 @@ window.cartCheckout = () => {
   document.getElementById('checkout-modal').classList.add('open');
   resetCheckoutForm();
   prefillCheckoutForm();
+  updateDeliveryTimeLabel();
+};
+
+// Update delivery time label based on cart category
+window.updateDeliveryTimeLabel = () => {
+  const labelEl = document.getElementById('delivery-time-label');
+  if (!labelEl) return;
+  
+  // Check if cart has sweets category items
+  const hasSweets = window._cart.some(item => item.category === 'sweets');
+  
+  if (hasSweets) {
+    labelEl.textContent = 'Время готовки';
+  } else {
+    labelEl.textContent = 'Желаемое время доставки';
+  }
 };
 
 window.prefillCheckoutForm = () => {
@@ -2152,12 +2177,13 @@ window.toggleAnotherPerson = () => {
 window.goToCheckoutStep2 = () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
+  const telegram = document.getElementById('checkout-telegram').value.trim();
   const address = document.getElementById('checkout-address').value.trim();
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !phone || !address) {
+  if (!name || !phone || !telegram || !address) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните имя, телефон и адрес';
+    msgEl.textContent = 'Заполните имя, телефон, Telegram и адрес';
     return;
   }
   
@@ -2349,9 +2375,9 @@ window.completeCheckout = async () => {
   const receiptFile = window.checkoutReceiptFile;
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !delivery) {
+  if (!name || !telegram || !delivery) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = !name ? 'Введите имя покупателя' : 'Выберите способ доставки';
+    msgEl.textContent = !name ? 'Введите имя покупателя' : !telegram ? 'Введите Telegram' : 'Выберите способ доставки';
     return;
   }
   
@@ -2379,10 +2405,8 @@ window.completeCheckout = async () => {
     if (tgUid) fd.append('customer_chat_id', String(tgUid));
   } catch(_) {}
   
-  // Telegram username as fallback
-  if (telegram) {
-    fd.append('customer_telegram', telegram);
-  }
+  // Telegram username is now required
+  fd.append('customer_telegram', telegram);
   
   // Fast order and delivery time
   if (fastOrder) {

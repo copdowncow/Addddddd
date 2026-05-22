@@ -32,7 +32,7 @@ function getMiniAppUrl() {
   // Fallback to Railway production URL if not set
   if (!url) {
     console.log('[getMiniAppUrl] No URL configured, using Railway fallback');
-    return 'https://re-production-57e4.up.railway.app';
+    return 'https://addddddd-production.up.railway.app';
   }
   return url;
 }
