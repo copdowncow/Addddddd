@@ -788,7 +788,7 @@ function pCard(p) {
   const shopName = shopCard ? (p.shop_name || 'Магазин') : '';
   const shopPhone = shopCard ? (p.seller_phone || '') : '';
   const shopPhoto = shopCard ? (p.photo_url || p.seller_photo || '') : '';
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко-букет: ' + (p.title || ''));
+  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''));
   
   // For shop listings, show shop info with photo instead of description
   const shouldShowShopInfo = shopCard;
@@ -896,7 +896,7 @@ window._pCardAddToCart = (uid, pAttr) => {
   const p = JSON.parse(decodeURIComponent(pAttr));
   // Block eco products
   if (!isShopListing(p)) {
-    if (typeof toast === 'function') toast('🌿 Эко-букеты заказываются через Telegram', 'info');
+    if (typeof toast === 'function') toast('', 'info');
     return;
   }
   const img = Array.isArray(p.photos) && p.photos[0] ? imgUrl(p.photos[0], 200) : null;
@@ -986,7 +986,7 @@ function renderDetail(p, el) {
   const shopPhone = p.seller_phone || '';
   const shopPhoto = p.photo_url || p.seller_photo || '';
   const shopCard = isShopListing(p);
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко-букет: ' + (p.title || ''));
+  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''));
   const shopAvatarHtml = shopPhoto
     ? '<img src="' + esc(shopPhoto) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover">'
     : '<span style="width:40px;height:40px;border-radius:50%;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:1rem">' + esc(getShopAvatar(shopName)) + '</span>';
@@ -1042,7 +1042,7 @@ window._pdDetailAddToCart = (btn) => {
   if (!p) return;
   // Block eco products from being added to cart
   if (!isShopListing(p)) {
-    if (typeof toast === 'function') toast('🌿 Эко-букеты заказываются через Telegram', 'info');
+    if (typeof toast === 'function') toast('🌿 Эко заказывается через Telegram', 'info');
     return;
   }
   const price  = window._detailPrice || priceWithCommission(p);
@@ -1237,10 +1237,10 @@ export async function filterAndGo(cat, mode = null) {
   if (banner) {
     if (selectedMode === 'eco') {
       banner.className = 'mode-banner eco-banner';
-      banner.textContent = '🌿 Показаны Эко-объявления — перепродажа от частных лиц';
+      banner.textContent = '🌿 Показаны Эко';
     } else {
       banner.className = 'mode-banner shop-banner';
-      banner.textContent = '🏪 Показаны объявления от профессиональных магазинов';
+      banner.textContent = '🏪 Показаны Магазинные';
     }
   }
 
@@ -1412,17 +1412,29 @@ document.addEventListener('DOMContentLoaded', () => {
   const catVal = document.getElementById('sell-cat-val')?.value;
   if (catVal) updateSizeField(catVal);
 
-  // Simplify form for shop users: hide everything except title/category/photos/description/price
-  const shop = getShopSession();
-  if (shop.phone) {
-    document.querySelectorAll('#page-sell [data-shop-hide]').forEach(el => {
-      el.style.display = 'none';
-    });
-    // Hide the whole "personal contacts" box - everything inside it is shop-hidden anyway
-    const box = document.getElementById('sell-contact-box');
-    if (box) box.style.display = 'none';
-  }
+  updateSellPageLayout();
 });
+
+export function updateSellPageLayout() {
+  const shop = getShopSession();
+  const elements = document.querySelectorAll('#page-sell [data-shop-hide]');
+  const box = document.getElementById('sell-contact-box');
+  const hint = document.getElementById('photo-hint');
+
+  if (shop.phone) {
+    elements.forEach(el => { el.style.display = 'none'; });
+    if (box) box.style.display = 'none';
+  } else {
+    elements.forEach(el => { el.style.display = ''; });
+    if (box) box.style.display = '';
+  }
+
+  if (hint) {
+    const minNeeded = shop.phone ? 1 : 3;
+    hint.textContent = 'Загружено ' + (window.sellFiles ? window.sellFiles.length : 0) + ' из ' + minNeeded + ' (минимум ' + minNeeded + ' фото)';
+  }
+}
+window.updateSellPageLayout = updateSellPageLayout;
 
 window.submitListing = async () => {
   const title    = document.getElementById('sell-title').value.trim();
@@ -1625,5 +1637,6 @@ export async function handleRoute() {
     goPage(valid.includes(page) ? page : 'home', false);
     if (page === 'catalog') await loadCatalog();
     if (page === 'shop-profile') await openShopProfile();
+    if (page === 'sell') updateSellPageLayout();
   }
 }

@@ -736,8 +736,8 @@ nav {
 /* ============================================================
    FOOTER / LIGHTBOX
    ============================================================ */
-#scroll-top { display: none; position: fixed; bottom: 28px; right: 24px; width: 44px; height: 44px; background: var(--black); color: #fff; border: none; border-radius: 50%; font-size: 1.1rem; z-index: 800; box-shadow: 0 6px 20px rgba(0,0,0,.2); transition: all .2s; }
-#scroll-top:hover { background: var(--green); transform: translateY(-3px); }
+#scroll-top { display: none; position: fixed; bottom: 28px; right: 24px; width: 48px; height: 48px; background: linear-gradient(135deg, #22a05b 0%, #0f7a3f 100%); color: #fff; border: none; border-radius: 16px; font-size: 1.2rem; z-index: 800; box-shadow: 0 10px 25px rgba(34,160,91,.3); transition: all .25s ease; align-items: center; justify-content: center; font-weight: bold; cursor: pointer; }
+#scroll-top:hover { transform: translateY(-4px); box-shadow: 0 14px 32px rgba(34,160,91,.42); }
 footer { background: var(--black); color: rgba(255,255,255,.45); text-align: center; padding: 36px 24px; font-size: .82rem; }
 .footer-logo { font-family: 'Cormorant Garamond',serif; font-size: 1.5rem; font-weight: 700; color: #fff; margin-bottom: 10px; display: block; }
 .footer-logo em { color: var(--green); font-style: normal; }
@@ -886,12 +886,12 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 <div id="page-home" class="page active">
   <div class="hero">
     <div class="hero-inner">
-      <div class="hero-badge">🌸 Таджикистан · Подарки с душой</div>
+      <div class="hero-badge"> Таджикистан · Подарки с душой</div>
       <h1>rebuket<span>.tj</span></h1>
       <p>Купи или продай букеты, корзины, мишки и сладости.<br>Свежие цветы и угощения по всему Таджикистану.</p>
       <div class="hero-btns">
-        <button class="btn btn-black"   onclick="setModeAndGo('eco')">🌿 Эко-букеты</button>
-        <button class="btn btn-primary" onclick="setModeAndGo('shop')">🏪 Магазинные цветы</button>
+        <button class="btn btn-black"   onclick="setModeAndGo('eco')"> Эко</button>
+        <button class="btn btn-primary" onclick="setModeAndGo('shop')"> Магазинные</button>
         <button class="btn btn-outline" onclick="goPage('sell')">+ Разместить</button>
       </div>
     </div>
@@ -936,7 +936,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         <button class="mode-btn"        id="cat-mode-shop" onclick="setCatalogMode('shop')"><span class="dot dot-shop"></span> Магазинные</button>
       </div>
     </div>
-    <div id="catalog-mode-banner" class="mode-banner eco-banner">🌿 Показаны Эко-объявления — перепродажа от частных лиц</div>
+    <div id="catalog-mode-banner" class="mode-banner eco-banner">🌿 Показаны Эко</div>
     <div id="shop-profile-bar" class="shop-profile-bar" style="display:none">
       <div class="shop-profile-avatar" id="shop-profile-avatar">🏪</div>
       <div class="shop-profile-body">
@@ -1641,6 +1641,7 @@ function updateShopUI() {
     if (dlbl) dlbl.textContent = 'Войти как магазин';
     if (btn)  btn.classList.remove('logged-in');
   }
+  if (window.updateSellPageLayout) window.updateSellPageLayout();
 }
 
 function onShopBtnClick() {
@@ -2039,7 +2040,7 @@ window.changeCartItemQty = (idx, delta) => {
 window.addToCart = (item) => {
   // Block eco products - cart is for shop products only
   if (!item || item.is_shop_listing !== true) {
-    toast('🌿 Эко-букеты заказываются через Telegram', 'info');
+    toast('🌿 Эко заказывается через Telegram', 'info');
     return;
   }
   // Check if item already exists in cart
@@ -2395,7 +2396,7 @@ window.renderProductCard = (p) => {
       </div>
       <div class="pc-actions" onclick="event.stopPropagation()">
         ${isEco
-          ? `<a class="pc-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко-букет: ' + (p.title || ''))}" target="_blank" rel="noopener"><span class="btn-icon">✈️</span> Купить через Telegram</a>`
+          ? `<a class="pc-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''))}" target="_blank" rel="noopener"><span class="btn-icon">✈️</span> Купить через Telegram</a>`
           : `<button class="pc-cart-btn" onclick="window.cardAddToCart(${pJson}, this)"><span class="btn-icon">🛒</span> Добавить в корзину</button>`
         }
       </div>
@@ -2451,7 +2452,7 @@ window.renderProductDetail = (p) => {
       </div>
       <div class="pd-actions">
         ${isEco
-          ? `<a class="pd-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко-букет: ' + (p.title || ''))}" target="_blank" rel="noopener"><span style="font-size:1.2rem">✈️</span> Купить через Telegram</a>`
+          ? `<a class="pd-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''))}" target="_blank" rel="noopener"><span style="font-size:1.2rem">✈️</span> Купить через Telegram</a>`
           : `<button class="pd-cart-btn" id="pd-cart-btn" onclick="window.pdAddToCart(this)"><span style="font-size:1.2rem">🛒</span> Добавить в корзину</button>`
         }
         <a class="btn btn-tg" href="https://t.me/rebuket_admin" target="_blank" rel="noopener">💬 Написать в поддержку</a>
@@ -2501,8 +2502,8 @@ window.setCatalogMode = async (mode) => {
   document.getElementById('cat-mode-eco').classList.toggle('active',  mode === 'eco');
   document.getElementById('cat-mode-shop').classList.toggle('active', mode === 'shop');
   const banner = document.getElementById('catalog-mode-banner');
-  if (mode === 'eco') { banner.className = 'mode-banner eco-banner'; banner.textContent = '🌿 Показаны Эко-объявления — перепродажа от частных лиц'; }
-  else { banner.className = 'mode-banner shop-banner'; banner.textContent = '🏪 Показаны объявления от профессиональных магазинов'; }
+  if (mode === 'eco') { banner.className = 'mode-banner eco-banner'; banner.textContent = '🌿 Показаны Эко'; }
+  else { banner.className = 'mode-banner shop-banner'; banner.textContent = '🏪 Показаны Магазинные'; }
   await setCatalogMode(mode);
 };
 window.setModeAndGo = async (mode) => {
