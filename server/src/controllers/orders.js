@@ -318,14 +318,21 @@ exports.updateOrderStatus = async (req, res) => {
     // Backward compat: 'confirmed' from admin = payment_confirmed (notifies seller)
     const newStatus = status === 'confirmed' ? 'payment_confirmed' : status;
 
-    const { data, error } = await getClient()
+    let query = getClient()
       .from('orders')
       .update({ status: newStatus })
-      .eq('id', id)
-      .select()
-      .single();
+      .eq('id', id);
+
+    if (newStatus === 'payment_confirmed' || newStatus === 'rejected') {
+      query = query.eq('status', 'pending');
+    }
+
+    const { data, error } = await query.select().single();
 
     if (error) throw error;
+    if (!data) {
+      return res.status(409).json({ error: 'Заказ уже обработан или статус изменился' });
+    }
 
     if (newStatus === 'payment_confirmed') {
       console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— notifying shop + customer');

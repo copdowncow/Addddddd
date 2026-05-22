@@ -224,6 +224,52 @@ async function trySendToCustomer(chatId, text, options = {}) {
   }
 }
 
+function downloadUrlBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const http = require('http');
+    const lib = (url || '').startsWith('https') ? https : http;
+    lib.get(url, (resp) => {
+      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        return downloadUrlBuffer(resp.headers.location).then(resolve).catch(reject);
+      }
+      if (resp.statusCode && resp.statusCode >= 400) {
+        return reject(new Error('HTTP ' + resp.statusCode));
+      }
+      const chunks = [];
+      resp.on('data', c => chunks.push(c));
+      resp.on('end', () => resolve(Buffer.concat(chunks)));
+      resp.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
+  if (!userBot && !ensureUserBot()) return false;
+  if (!chatId || !photoSource) return false;
+  const cid = Number(chatId);
+  try {
+    if (Buffer.isBuffer(photoSource)) {
+      await userBot.sendPhoto(cid, photoSource, options);
+      return true;
+    }
+    const url = String(photoSource).trim();
+    if (!url) return false;
+    try {
+      await userBot.sendPhoto(cid, url, options);
+      return true;
+    } catch (urlErr) {
+      console.log('[sendPhotoToCustomer] URL send failed, retry buffer:', urlErr.message);
+      const buf = await downloadUrlBuffer(url);
+      await userBot.sendPhoto(cid, buf, options);
+      return true;
+    }
+  } catch (e) {
+    console.error('[sendPhotoToCustomer] Failed:', cid, e.message);
+    return false;
+  }
+}
+
 function buildAdminUnreachableWarning(order, result) {
   const botUser = getBotUsername();
   const tg = formatTelegramHandle(order.customer_telegram) || 'не указан';
@@ -280,7 +326,7 @@ async function sendCustomerPaymentNotification(order) {
     `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
     `Магазин получил уведомление и начинает сборку.\n\n` +
     `💰 Сумма: ${(Number(order.total) || 0).toLocaleString('ru')} сом\n\n` +
-    `<i>Мы сообщим о каждом изменении статуса вашего заказа в этот чат.</i>`;
+    `<i>Мы сообщим о каждом изменении статуса заказа в Telegram.</i>`;
 
   const result = await trySendToCustomer(chatId, text);
   if (result.ok) console.log('[sendCustomerPaymentNotification] Sent to:', chatId);
@@ -464,9 +510,24 @@ async function handleOrderCallback(callbackQuery) {
   try {
     const { createSupabaseClient } = require('../db/supabase');
     const db = createSupabaseClient();
+
+    // Обновляем только из pending — защита от повторных нажатий и дублей
     const { data: updatedOrder, error } = await db
-      .from('orders').update({ status }).eq('id', orderId).select().single();
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId)
+      .eq('status', 'pending')
+      .select()
+      .single();
+
     if (error) throw new Error(error.message);
+    if (!updatedOrder) {
+      await adminBot.answerCallbackQuery(callbackQuery.id, {
+        text: 'Заказ уже обработан ранее',
+        show_alert: true,
+      });
+      return;
+    }
 
     // ── Попытаться восстановить customer_chat_id если отсутствует ──
     if (!updatedOrder.customer_chat_id) {
@@ -694,7 +755,7 @@ function initUserBot() {
           const sent = await sendCustomerPaymentNotification(fresh);
           if (sent.ok) {
             await userBot.sendMessage(chatId,
-              `✅ <b>Уведомления подключены!</b>\n\nЗаказ <b>#${orderId}</b> — вы будете получать сообщения о статусе сюда.`,
+              `✅ <b>Уведомления подключены!</b>\n\nЗаказ <b>#${orderId}</b> — статусы заказа будут приходить в Telegram.`,
               { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
             );
           } else {
@@ -781,10 +842,6 @@ function initUserBot() {
       if (orders?.length) {
         for (const o of orders) {
           await db.from('orders').update({ customer_chat_id: chatId }).eq('id', o.id);
-          const { data: full } = await db.from('orders').select('*').eq('id', o.id).maybeSingle();
-          if (full?.status === 'payment_confirmed') {
-            try { await sendCustomerPaymentNotification({ ...full, customer_chat_id: chatId }); } catch (_) {}
-          }
         }
         console.log('[contact] Patched', orders.length, 'existing orders with chat_id:', chatId);
       }
@@ -793,7 +850,7 @@ function initUserBot() {
     }
 
     await userBot.sendMessage(chatId,
-      `✅ <b>Номер сохранён!</b>\n\nТеперь вы будете получать уведомления о ваших заказах в этот чат.\n\n📞 ${phone}`,
+      `✅ <b>Номер сохранён!</b>\n\nТеперь вы будете получать уведомления о заказах в Telegram.\n\n📞 ${phone}`,
       { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
     );
   });
@@ -865,11 +922,6 @@ function initAdminBot() {
       { parse_mode: 'HTML' }
     );
     if (isNew) console.log(`✅ Новый админ: ADMIN_CHAT_ID=${chatId}`);
-  });
-
-  adminBot.on('callback_query', async (query) => {
-    try { await handleOrderCallback(query); }
-    catch (err) { console.error('[adminBot callback_query]', err.message); }
   });
 
   adminBot.on('polling_error', (err) => {
@@ -1160,7 +1212,13 @@ async function notifyShopRejected(shop) {
 function setupCallbacks(onApprove, onReject) {
   if (!adminBot) return;
   adminBot.on('callback_query', async (q) => {
-    const parts  = (q.data || '').split(':');
+    const data = q.data || '';
+    if (/^(order_confirm|order_reject):/.test(data)) {
+      try { await handleOrderCallback(q); } catch (err) { console.error('[adminBot order callback]', err.message); }
+      return;
+    }
+
+    const parts  = data.split(':');
     const action = parts[0];
     const id     = parts[1];
 
@@ -1410,12 +1468,28 @@ function initShopBot() {
       const db = getDb();
       const { data: updated } = await db.from('orders')
         .update({ status: 'ready', delivery_photo_url: photoUrl })
-        .eq('id', orderId).select().single();
+        .eq('id', orderId)
+        .select()
+        .single();
       const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', chatId).single();
-      await shopBot.sendMessage(chatId, `✅ Фото отправлено клиенту. Заказ #${orderId} помечен как «📦 Готов».`, {
-        reply_markup: { inline_keyboard: [[{ text: '🚚 Доставлен', callback_data: `shop_delivered:${orderId}` }]] }
-      });
-      try { await notifyCustomerStatusChanged(updated, shop); } catch(e) { console.log('notify customer err:', e.message); }
+
+      let photoDelivered = false;
+      if (updated) {
+        try {
+          photoDelivered = await notifyCustomerOrderReady(updated, shop, buffer);
+        } catch (e) {
+          console.log('[shopBot photo] notify customer:', e.message);
+        }
+      }
+
+      await shopBot.sendMessage(chatId,
+        photoDelivered
+          ? `✅ Фото отправлено клиенту. Заказ #${orderId} помечен как «📦 Готов».`
+          : `⚠️ Заказ #${orderId} помечен «Готов», но клиенту фото не доставлено (нет Telegram / ошибка отправки).`,
+        {
+          reply_markup: { inline_keyboard: [[{ text: '🚚 Доставлен', callback_data: `shop_delivered:${orderId}` }]] }
+        }
+      );
     } catch (e) {
       console.error('[shopBot photo]', e.message);
       try { await shopBot.sendMessage(chatId, '❌ Не удалось обработать фото: ' + e.message); } catch(_){}
@@ -1468,7 +1542,7 @@ function initShopBot() {
         shopPendingPhoto.set(q.message.chat.id, orderId);
         await shopBot.answerCallbackQuery(q.id, { text: '📸 Отправьте фото готового букета' });
         await shopBot.sendMessage(q.message.chat.id,
-          `📸 <b>Фото-отчёт по заказу #${orderId}</b>\n\nОтправьте фотографию — она будет переслана клиенту.\n\n<i>Отмена: /cancel</i>`,
+          `📸 <b>Фото-отчёт по заказу #${orderId}</b>\n\nОтправьте фотографию готового букета — клиент получит её в Telegram.\n\n<i>Отмена: /cancel</i>`,
           { parse_mode: 'HTML' });
         return;
       } catch (e) { console.error('[shopBot ready prompt]', e.message); }
@@ -1497,14 +1571,25 @@ function initShopBot() {
       if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch(_){} }
       else if (Array.isArray(order.items)) items = order.items;
 
-      const orderHasShopItem = items.some(it => (it.seller_phone || '').toString().trim() === shop.phone);
+      const shopDigits = phoneDigits(shop.phone);
+      const orderHasShopItem = items.some(it => phoneDigits(it.seller_phone) === shopDigits);
       if (!orderHasShopItem) { await shopBot.answerCallbackQuery(q.id, { text: 'Этот заказ не для вашего магазина', show_alert: true }); return; }
       if (order.status === 'pending') { await shopBot.answerCallbackQuery(q.id, { text: 'Заказ ещё не подтверждён админом', show_alert: true }); return; }
 
       const updateFields = { status: newStatus };
       if (newStatus === 'delivered') updateFields.delivered_at = new Date().toISOString();
-      const { data: updated, error } = await db.from('orders').update(updateFields).eq('id', orderId).select().single();
+      const { data: updated, error } = await db
+        .from('orders')
+        .update(updateFields)
+        .eq('id', orderId)
+        .eq('status', order.status)
+        .select()
+        .single();
       if (error) throw error;
+      if (!updated) {
+        await shopBot.answerCallbackQuery(q.id, { text: 'Статус уже обновлён', show_alert: true });
+        return;
+      }
 
       await shopBot.answerCallbackQuery(q.id, { text: labels[newStatus] || 'OK' });
 
@@ -1566,39 +1651,13 @@ async function resolveCustomerChatId(order) {
 }
 
 async function notifyCustomerPaymentConfirmed(order) {
-  if (!userBot && !ensureUserBot()) { console.error('[notifyCustomerPaymentConfirmed] no userBot'); return; }
-  if (!order) return;
-
-  // Deduplication check
-  if (!shouldSendNotification(order.id, 'customer_payment_confirmed')) {
-    return;
-  }
-
-  const chatId = await resolveCustomerChatId(order);
-  if (!chatId) {
-    console.log('[notifyCustomerPaymentConfirmed] No chat_id in order', order.id);
-    return;
-  }
-
-  const total = (Number(order.total) || 0).toLocaleString('ru');
-  const text =
-    `✅ <b>Чек подтверждён!</b>\n\n` +
-    `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
-    `Магазин получил уведомление и начинает сборку.\n\n` +
-    `💰 Сумма: ${total} сом\n\n` +
-    `<i>Мы сообщим о каждом изменении статуса вашего заказа прямо сюда.</i>`;
-
-  try {
-    await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
-    console.log('[notifyCustomerPaymentConfirmed] Sent to:', chatId);
-  } catch (e) {
-    console.error('[notifyCustomerPaymentConfirmed] Failed:', e.message);
-  }
+  return sendCustomerPaymentNotification(order);
 }
 
 async function notifyCustomerPaymentRejected(order) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
+  if (!shouldSendNotification(order.id, 'customer_payment_rejected')) return;
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
@@ -1622,9 +1681,42 @@ async function notifyCustomerPaymentRejected(order) {
 // ─────────────────────────────────────────────
 // 📲 Уведомления клиенту о смене статуса заказа
 // ─────────────────────────────────────────────
+async function notifyCustomerOrderReady(order, shop, photoSource) {
+  if (!order?.id) return false;
+  if (!shouldSendNotification(order.id, 'customer_status_ready')) return false;
+
+  const chatId = await resolveCustomerChatId(order);
+  if (!chatId) {
+    console.log('[notifyCustomerOrderReady] no chat_id for order', order.id);
+    return false;
+  }
+
+  const shopName = shop?.shop_name || 'Магазин';
+  const text =
+    `📸 <b>Ваш букет готов!</b>\n\n` +
+    `<b>${shopName}</b> отправил фото готового заказа. Скоро в пути! 🚚\n\n` +
+    `📦 Заказ #${order.id}`;
+
+  const src = photoSource || order.delivery_photo_url;
+  if (!src) {
+    await trySendToCustomer(chatId, text);
+    return true;
+  }
+  const ok = await sendPhotoToCustomer(chatId, src, { caption: text, parse_mode: 'HTML' });
+  if (!ok) await trySendToCustomer(chatId, text + '\n\n<i>Фото временно недоступно — свяжитесь с @rebuket_admin</i>');
+  return ok;
+}
+
 async function notifyCustomerStatusChanged(order, shop) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
+
+  if (order.status === 'ready') {
+    await notifyCustomerOrderReady(order, shop, order.delivery_photo_url);
+    return;
+  }
+
+  if (!shouldSendNotification(order.id, 'customer_status_' + order.status)) return;
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
@@ -1662,19 +1754,6 @@ async function notifyCustomerStatusChanged(order, shop) {
     return;
   }
 
-  // Готов — фотоотчёт
-  if (order.status === 'ready') {
-    const text = `📸 <b>Ваш букет готов!</b>\n\n<b>${shopName}</b> прислал фото. Заказ скоро в пути! 🚚\n\n📦 Заказ #${orderId}`;
-    try {
-      if (order.delivery_photo_url) {
-        await userBot.sendPhoto(chatId, order.delivery_photo_url, { caption: text, parse_mode: 'HTML' });
-      } else {
-        await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
-      }
-    } catch (e) { console.log('[notifyCustomerStatusChanged ready]', e.message); }
-    return;
-  }
-
   // Доставлен — кнопки подтверждения
   if (order.status === 'delivered') {
     const text = `🚚 <b>Ваш заказ доставлен!</b>\n\nПожалуйста, подтвердите получение в течение <b>2 часов</b>. Если не подтвердите — заказ будет автоматически завершён.\n\n📦 Заказ #${orderId}\n💐 ${shopName}`;
@@ -1689,7 +1768,8 @@ async function notifyCustomerStatusChanged(order, shop) {
         }
       };
       if (order.delivery_photo_url) {
-        await userBot.sendPhoto(chatId, order.delivery_photo_url, { caption: text, ...opts });
+        const ok = await sendPhotoToCustomer(chatId, order.delivery_photo_url, { caption: text, ...opts });
+        if (!ok) await userBot.sendMessage(chatId, text, opts);
       } else {
         await userBot.sendMessage(chatId, text, opts);
       }
@@ -1842,7 +1922,7 @@ function startAutoConfirmInterval() {
 // ─────────────────────────────────────────────
 // In-memory deduplication cache for notifications (orderId -> timestamp)
 const notificationCache = new Map();
-const NOTIFICATION_DEDUP_WINDOW = 60000; // 1 minute
+const NOTIFICATION_DEDUP_WINDOW = 5 * 60 * 1000; // 5 minutes
 
 function shouldSendNotification(orderId, type) {
   const key = `${orderId}:${type}`;
