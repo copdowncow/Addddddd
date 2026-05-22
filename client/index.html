@@ -1464,6 +1464,29 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           </div>
         </div>
       </div>
+
+      <div class="checkout-recipient-card" style="margin-top:16px">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px">
+          <input type="checkbox" id="checkout-fast-order" style="width:18px;height:18px">
+          <span style="font-weight:600;font-size:.9rem">⚡ Заказать побыстрее</span>
+        </label>
+        <small style="color:var(--gray);font-size:.75rem;display:block;margin-bottom:12px">Срочный заказ - доставка в приоритете</small>
+        
+        <div class="form-group">
+          <label>Желаемое время доставки</label>
+          <select id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+            <option value="">Выберите время</option>
+            <option value="1 час">1 час</option>
+            <option value="2 часа">2 часа</option>
+            <option value="3 часа">3 часа</option>
+            <option value="4 часа">4 часа</option>
+            <option value="5 часов">5 часов</option>
+            <option value="6 часов">6 часов</option>
+            <option value="Сегодня вечером">Сегодня вечером</option>
+            <option value="Завтра утром">Завтра утром</option>
+          </select>
+        </div>
+      </div>
       
       <button class="btn btn-primary" style="width:100%;border-radius:14px;padding:14px" onclick="goToCheckoutStep2()">
         Далее →
@@ -2268,6 +2291,8 @@ window.resetCheckoutForm = () => {
   document.getElementById('checkout-receiver-name').value = '';
   document.getElementById('checkout-receiver-phone').value = '';
   document.getElementById('checkout-receiver-address').value = '';
+  document.getElementById('checkout-fast-order').checked = false;
+  document.getElementById('checkout-delivery-time').value = '';
   document.getElementById('checkout-step-1').style.display = 'block';
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'none';
@@ -2318,6 +2343,8 @@ window.completeCheckout = async () => {
   const receiverName = document.getElementById('checkout-receiver-name').value.trim();
   const receiverPhone = document.getElementById('checkout-receiver-phone').value.trim();
   const receiverAddress = document.getElementById('checkout-receiver-address').value.trim();
+  const fastOrder = document.getElementById('checkout-fast-order').checked;
+  const deliveryTime = document.getElementById('checkout-delivery-time').value.trim();
   const delivery = window.checkoutDelivery;
   const receiptFile = window.checkoutReceiptFile;
   const msgEl = document.getElementById('checkout-msg');
@@ -2355,6 +2382,14 @@ window.completeCheckout = async () => {
   // Telegram username as fallback
   if (telegram) {
     fd.append('customer_telegram', telegram);
+  }
+  
+  // Fast order and delivery time
+  if (fastOrder) {
+    fd.append('fast_order', 'true');
+  }
+  if (deliveryTime) {
+    fd.append('delivery_time', deliveryTime);
   }
   
   if (anotherPerson) {

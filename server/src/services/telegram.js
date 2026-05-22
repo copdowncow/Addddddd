@@ -88,6 +88,18 @@ async function notifyAdminAboutOrder(order) {
   message += `📍 Адрес: ${order.customer_address}\n`;
   message += `🚚 Доставка: ${deliveryLabel}\n`;
   message += `💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.\n\n`;
+  
+  // Add fast order and delivery time info
+  if (order.fast_order) {
+    message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
+  }
+  if (order.delivery_time) {
+    message += `⏰ Желаемое время: ${order.delivery_time}\n`;
+  }
+  if (order.fast_order || order.delivery_time) {
+    message += `\n`;
+  }
+  
   message += `<b>Товары:</b>\n${itemsList}\n`;
   
   if (order.receiver_name) {
@@ -265,11 +277,20 @@ async function notifySellerAboutOrder(order) {
   const itemsList = items.map(it => `• ${it.title || 'Товар'} ×${it.qty || 1}`).join('\n');
   const total = (Number(order.total) || 0).toLocaleString('ru');
 
-  const message = `🛒 <b>Новый заказ для вашего магазина!</b>\n\n` +
+  let message = `🛒 <b>Новый заказ для вашего магазина!</b>\n\n` +
     `📦 <b>Товары:</b>\n${itemsList}\n\n` +
     `💰 <b>Сумма:</b> ${total} сом\n` +
-    `🚚 <b>Доставка:</b> ${order.delivery_type || '—'}\n\n` +
-    `⏳ Контакты клиента откроются после того, как вы примете заказ.`;
+    `🚚 <b>Доставка:</b> ${order.delivery_type || '—'}\n`;
+  
+  // Add fast order and delivery time info
+  if (order.fast_order) {
+    message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
+  }
+  if (order.delivery_time) {
+    message += `⏰ Желаемое время: ${order.delivery_time}\n`;
+  }
+  
+  message += `\n⏳ Контакты клиента откроются после того, как вы примете заказ.`;
 
   const keyboard = {
     inline_keyboard: [[
