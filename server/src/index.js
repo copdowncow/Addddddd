@@ -114,6 +114,11 @@ router.get('/admin/earnings',     adminAuth, E.getEarnings);
 router.get('/admin/settings',     adminAuth, E.getSettings);
 router.patch('/admin/settings',   adminAuth, E.updateSettings);
 router.get('/platform-settings',             E.getPublicSettings);
+router.get('/config',            (req, res) => res.json({
+  instagram:    process.env.ADMIN_INSTAGRAM || 'https://instagram.com/rebuket',
+  telegram:     process.env.ADMIN_TELEGRAM  || 'https://t.me/rebuket_admin',
+  bot_username: process.env.BOT_USERNAME    || 'ReBuket_bot',
+}));
 
 // ── Disputes ─────────────────────────────────────────────
 router.get('/admin/disputes',                       adminAuth, E.listDisputes);

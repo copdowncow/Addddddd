@@ -1734,6 +1734,7 @@ module.exports = {
   notifyAdminAboutShopOrder,
   notifySellerAboutOrder,
   notifyCustomerPaymentConfirmed,
+  notifyCustomerStatusChanged,
   activateOrderChatFlow,
   relayShopToCustomer,
   relayCustomerToShop,

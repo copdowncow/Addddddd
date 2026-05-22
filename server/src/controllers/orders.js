@@ -341,6 +341,15 @@ exports.shopUpdateOrderStatus = async (req, res) => {
       console.error('Failed to send shop notification:', notifyErr);
     }
 
+    // Notify customer about shop-side status change (seller_accepted/preparing/ready/delivered/rejected)
+    try {
+      const { notifyCustomerStatusChanged } = require('../services/telegram');
+      console.log('[shopUpdateOrderStatus] notifying customer for order', data.id, 'newStatus:', newStatus, 'customer_chat_id:', data.customer_chat_id);
+      await notifyCustomerStatusChanged(data, shop);
+    } catch (notifyErr) {
+      console.error('[shopUpdateOrderStatus] Failed to notify customer:', notifyErr.message);
+    }
+
     res.json(data);
   } catch (e) {
     console.error('[shopUpdateOrderStatus]', e);

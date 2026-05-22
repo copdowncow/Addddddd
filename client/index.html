@@ -1527,12 +1527,37 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
       <div style="background:linear-gradient(135deg,#0f1117 0%,#1e2330 100%);border-radius:16px;padding:24px;margin-bottom:20px;color:#fff">
         <div style="font-size:2.4rem;margin-bottom:12px;text-align:center">💳</div>
         <h4 style="text-align:center;margin-bottom:8px;font-size:1.2rem">Оплата заказа</h4>
-        <p style="text-align:center;font-size:.85rem;color:rgba(255,255,255,.7);margin-bottom:16px">Переведите сумму на номер</p>
+        <p style="text-align:center;font-size:.85rem;color:rgba(255,255,255,.7);margin-bottom:16px">Переведите сумму на один из номеров</p>
         
+        <!-- Total Amount Display -->
+        <div style="background:rgba(34,160,91,.2);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px;border:1px solid rgba(34,160,91,.3)">
+          <div style="font-size:.85rem;color:rgba(255,255,255,.8);margin-bottom:4px">К оплате</div>
+          <div style="font-size:2rem;font-weight:700;letter-spacing:1px;margin-bottom:4px" id="checkout-total-amount">0 сом</div>
+          <div style="font-size:.75rem;color:rgba(255,255,255,.6)" id="checkout-total-breakdown">Товары: 0 сом</div>
+        </div>
+        
+        <!-- Alif Payment -->
         <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
-          <div style="font-size:1.8rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">902070045</div>
-          <div style="font-size:.85rem;color:rgba(255,255,255,.6)">Alif / Dushanbe City</div>
-          <div style="font-size:.8rem;color:rgba(255,255,255,.5);margin-top:4px">А.Х</div>
+          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">🏦 Alif Bank</div>
+          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">902070045</div>
+          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">Dushanbe City</div>
+          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">А.Х</div>
+        </div>
+        
+        <!-- Alipay Payment -->
+        <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
+          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">🇨🇳 Alipay</div>
+          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">+86 138 0013 8000</div>
+          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">Alipay China</div>
+          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">ReBuket</div>
+        </div>
+        
+        <!-- DS Payment -->
+        <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
+          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">💳 DS (Dushanbe Savings)</div>
+          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">5555 0000 1234 5678</div>
+          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">DS Bank</div>
+          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">ReBuket Account</div>
         </div>
         
         <div style="text-align:center;font-size:.8rem;color:rgba(255,255,255,.5)">
@@ -2169,12 +2194,53 @@ window.selectDeliveryPayer = (payer, ev) => {
   document.getElementById('step2-next').style.display = 'block';
 };
 
-window.goToCheckoutStep3 = () => {
+window.goToCheckoutStep3 = async () => {
   if (window.checkoutDelivery === 'taxi' && !window.checkoutDeliveryPayer) {
     const m = document.getElementById('checkout-msg');
     if (m) { m.style.color = 'var(--red)'; m.textContent = 'Выберите кто оплачивает доставку'; }
     return;
   }
+  
+  // Calculate and display total amount
+  const subtotal = window._cart.reduce((s,i) => s + (i.price||0), 0);
+  let deliveryFee = 0;
+  let deliveryFeeText = '';
+  
+  if (window.checkoutDelivery === 'taxi' && window.checkoutDeliveryPayer === 'fixed') {
+    try {
+      const settings = await fetch('/api/platform-settings').then(r => r.json());
+      deliveryFee = Number(settings.taxi_fixed_fee || 50);
+      deliveryFeeText = `Доставка (такси): ${deliveryFee} сом`;
+    } catch(e) {
+      deliveryFee = 50;
+      deliveryFeeText = `Доставка (такси): 50 сом`;
+    }
+  } else if (window.checkoutDelivery === 'pickup') {
+    deliveryFeeText = 'Самовывоз (бесплатно)';
+  } else if (window.checkoutDelivery === 'taxi' && window.checkoutDeliveryPayer === 'buyer') {
+    deliveryFeeText = 'Доставка оплачивается водителю отдельно';
+  }
+  
+  const total = subtotal + deliveryFee;
+  
+  const totalAmountEl = document.getElementById('checkout-total-amount');
+  const totalBreakdownEl = document.getElementById('checkout-total-breakdown');
+  
+  if (totalAmountEl) {
+    totalAmountEl.textContent = total.toLocaleString('ru') + ' сом';
+  }
+  
+  if (totalBreakdownEl) {
+    const breakdown = [`Товары: ${subtotal.toLocaleString('ru')} сом`];
+    if (deliveryFee > 0) {
+      breakdown.push(`Доставка: ${deliveryFee} сом`);
+    }
+    if (deliveryFeeText) {
+      breakdown.push(deliveryFeeText);
+    }
+    totalBreakdownEl.textContent = breakdown.join(' + ');
+  }
+  
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'block';
 };
