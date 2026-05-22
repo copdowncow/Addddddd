@@ -260,9 +260,10 @@ async function handleOrderCallback(callbackQuery) {
 // Notify the seller (shop) when admin confirms payment
 async function notifySellerAboutOrder(order) {
   if (!order) return;
-  const bot = shopBot || userBot; // fallback to userBot if shopBot not configured
+  // Always use userBot for shop notifications (same bot that sends payment confirmation)
+  const bot = userBot;
   if (!bot) {
-    console.log('[notifySellerAboutOrder] No bot available');
+    console.log('[notifySellerAboutOrder] userBot not available');
     return;
   }
 
@@ -474,17 +475,76 @@ function initUserBot() {
     );
   });
 
-  // /endchat — leave active order chat
+  // /endchat — leave active order chat permanently
   userBot.onText(/\/endchat/, async (msg) => {
     try {
       const sess = await Chat.getActiveChat(msg.chat.id);
       if (sess) {
         await Chat.clearActiveChat(msg.chat.id);
-        await userBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу. Чтобы вернуться — мы вам напишем при новых сообщениях магазина.');
+        await userBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу. Чат завершен навсегда.');
       } else {
         await userBot.sendMessage(msg.chat.id, 'Активного чата нет.');
       }
     } catch (_) {}
+  });
+
+  // /contact — enter chat with shop for active order
+  userBot.onText(/\/contact/, async (msg) => {
+    try {
+      const chatId = msg.chat.id;
+      
+      // Find active order for this customer
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      
+      // Find order where customer has chat_id and chat is active
+      const { data: orders } = await db
+        .from('orders')
+        .select('*')
+        .eq('customer_chat_id', String(chatId))
+        .eq('chat_active', true)
+        .in('status', ['seller_accepted', 'in_progress', 'ready'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (!orders || orders.length === 0) {
+        await userBot.sendMessage(chatId, '❌ Нет активного заказа для чата с магазином.');
+        return;
+      }
+      
+      const order = orders[0];
+      
+      // Activate chat for customer
+      await Chat.setActiveChat(chatId, 'customer', order.id);
+      
+      // Get shop info
+      let items = [];
+      if (typeof order.items === 'string') {
+        try { items = JSON.parse(order.items); } catch (e) { items = []; }
+      } else if (Array.isArray(order.items)) {
+        items = order.items;
+      }
+      const sellerPhones = [...new Set(items.map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
+      
+      const { data: shops } = await db
+        .from('shops')
+        .select('phone, shop_name, telegram_chat_id')
+        .in('phone', sellerPhones);
+      
+      const shop = shops && shops[0];
+      
+      await userBot.sendMessage(chatId,
+        `✅ <b>Чат с магазином открыт</b>\n\n` +
+        `📦 Заказ #${order.id}\n` +
+        (shop ? `🏪 Магазин: ${shop.shop_name}\n` : '') +
+        `\nТеперь вы можете общаться с магазином напрямую.\n\n` +
+        `Для завершения чата напишите /endchat`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (e) {
+      console.error('[/contact] Error:', e.message);
+      await userBot.sendMessage(msg.chat.id, '❌ Ошибка при открытии чата.');
+    }
   });
 
   userBot.on('message', async (msg) => {
