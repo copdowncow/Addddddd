@@ -25,6 +25,7 @@ router.post('/shops/login',    S.login);
 router.get('/shops/me',        shopAuth, S.me);
 router.get('/shops/by-phone',  S.getByPhone);
 router.get('/shops/products', shopAuth, S.listProducts);
+router.patch('/shops/products/:id', shopAuth, S.updateProduct);
 router.delete('/shops/products/:id', shopAuth, S.deleteProduct);
 
 router.get('/admin/products',         adminAuth, P.adminList);

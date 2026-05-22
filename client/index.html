@@ -683,7 +683,7 @@ nav {
 .cart-browse-btn:hover { background: var(--green-d); transform: translateY(-1px); }
 .cart-section-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--gray); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
 .cart-section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-.cart-item { display: flex; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); align-items: flex-start; animation: slideInCart .25s cubic-bezier(.22,1,.36,1); position: relative; }
+.cart-item { display: flex; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); align-items: flex-start; animation: slideInCart .25s cubic-bezier(.22,1,.36,1); }
 @keyframes slideInCart { from{opacity:0;transform:translateX(24px)} to{opacity:1;transform:translateX(0)} }
 .ci-img { width: 72px; height: 72px; border-radius: 14px; object-fit: cover; background: var(--green-l); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem; overflow: hidden; border: 1.5px solid var(--border); }
 .ci-img img { width: 100%; height: 100%; object-fit: cover; }
@@ -692,8 +692,14 @@ nav {
 .ci-sub { font-size: .74rem; color: var(--gray); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
 .ci-sub-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--border); }
 .ci-price { font-size: 1.05rem; font-weight: 700; color: var(--green-d); }
-.ci-remove { background: none; border: none; color: var(--gray); font-size: .75rem; padding: 6px; transition: all .15s; border-radius: 8px; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; margin-top: 2px; }
-.ci-remove:hover { color: var(--red); background: #fdecea; }
+.ci-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 8px; }
+.ci-qty { display: inline-flex; align-items: center; gap: 0; background: #f5f5f5; border-radius: 50px; overflow: hidden; border: 1.5px solid var(--border); }
+.ci-qty-btn { width: 34px; height: 34px; border: none; background: none; color: var(--green-d); font-size: 1.15rem; font-weight: 700; cursor: pointer; transition: background .15s, color .15s; display: flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0; }
+.ci-qty-btn:hover { background: var(--green); color: #fff; }
+.ci-qty-btn:active { transform: scale(.9); }
+.ci-qty-val { min-width: 26px; text-align: center; font-size: .9rem; font-weight: 700; color: var(--black); user-select: none; }
+.ci-remove { background: none; border: 1.5px solid var(--border); color: var(--gray); font-size: .72rem; font-weight: 700; padding: 0; transition: all .15s; border-radius: 50%; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; cursor: pointer; }
+.ci-remove:hover { color: var(--red); background: #fdecea; border-color: #fca5a5; }
 .cart-foot { padding: 16px 24px 28px; border-top: 1px solid var(--border); flex-shrink: 0; background: #fff; border-radius: 0 0 0 24px; }
 .cart-summary { background: var(--warm); border-radius: 16px; padding: 16px 18px; margin-bottom: 16px; border: 1.5px solid var(--border); }
 .cart-summary-row { display: flex; justify-content: space-between; align-items: center; font-size: .83rem; color: var(--gray); margin-bottom: 8px; }
@@ -798,6 +804,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
   .nav-right .nav-cart { display:none !important; }
 }
 </style>
+<link rel="stylesheet" href="/css/premium.css?v=4">
 </head>
 <body>
 
@@ -975,27 +982,55 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 <div id="page-shop-profile" class="page">
   <div class="section">
     <button class="back" onclick="goPage('catalog')">← Назад</button>
-    <div class="shop-page-header">
-      <div class="shop-page-top">
-        <div class="shop-profile-avatar" id="shop-profile-page-avatar" style="width:80px;height:80px;font-size:2rem">🏪</div>
-        <div style="flex:1">
-          <div class="shop-page-welcome" id="shop-profile-page-welcome" style="font-size:1.1rem;color:var(--primary);font-weight:600;margin-bottom:4px">Добро пожаловать в магазин</div>
-          <div class="shop-page-title" id="shop-profile-page-name" style="font-size:1.5rem">Профиль магазина</div>
-          <div class="shop-page-sub" id="shop-profile-page-sub">Показаны все ваши публикации</div>
-          <div class="shop-page-desc" id="shop-profile-page-description" style="margin-top:8px;line-height:1.5">Добавьте описание магазина в редактировании профиля, чтобы покупатели быстрее находили вас.</div>
+
+    <!-- Profile card -->
+    <div class="sp-card">
+      <!-- Cover strip -->
+      <div class="sp-cover" id="shop-profile-cover"></div>
+
+      <div class="sp-body">
+        <!-- Avatar + name row -->
+        <div class="sp-top">
+          <div class="sp-avatar-wrap">
+            <div class="sp-avatar" id="shop-profile-page-avatar">🏪</div>
+          </div>
+          <div class="sp-meta">
+            <div class="sp-welcome" id="shop-profile-page-welcome">Добро пожаловать</div>
+            <div class="sp-name" id="shop-profile-page-name">Профиль магазина</div>
+            <div class="sp-sub" id="shop-profile-page-sub">Ваши публикации и настройки</div>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="sp-desc" id="shop-profile-page-description">Загрузка…</div>
+
+        <!-- Stats row -->
+        <div class="sp-stats">
+          <div class="sp-stat">
+            <span class="sp-stat-num" id="shop-profile-page-count">—</span>
+            <span class="sp-stat-lbl">публикаций</span>
+          </div>
+          <div class="sp-stat-div"></div>
+          <div class="sp-stat">
+            <span class="sp-stat-num" id="shop-profile-page-phone">—</span>
+            <span class="sp-stat-lbl">телефон</span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="sp-actions">
+          <button class="btn btn-primary sp-action-btn" onclick="openEditShopModal()">✏️ Редактировать профиль</button>
+          <button class="btn btn-outline sp-action-btn" onclick="logoutShopFromProfile()">Выйти</button>
         </div>
       </div>
-      <div class="shop-page-stats" style="display:flex;gap:12px;margin-top:16px">
-        <div class="shop-stat-pill" id="shop-profile-page-count" style="background:linear-gradient(135deg,var(--primary),var(--primary-d));color:white;padding:8px 16px;border-radius:20px;font-weight:600;font-size:.9rem">0 публикаций</div>
-        <div class="shop-stat-pill" id="shop-profile-page-phone" style="background:var(--warm);padding:8px 16px;border-radius:20px;font-weight:600;font-size:.9rem;border:1px solid var(--border)">Телефон: —</div>
-      </div>
-      <div class="shop-profile-actions" style="margin-top:20px;display:flex;gap:12px">
-        <button class="btn btn-primary" onclick="openEditShopModal()" style="padding:12px 20px;border-radius:16px">✏️ Редактировать профиль</button>
-        <button class="btn btn-outline" onclick="logoutShopFromProfile()" style="padding:12px 20px;border-radius:16px">Выйти из магазина</button>
-      </div>
     </div>
-    <div class="shop-pubs" id="shop-publications-list" style="margin-top:32px">
-      <div class="empty"><span>🏬</span><h3>Нет публикаций</h3><p>Зайдите в свой профиль, чтобы добавить объявление или обновить страницу.</p></div>
+
+    <!-- Publications list -->
+    <div class="sp-pubs-header">
+      <span>Мои публикации</span>
+    </div>
+    <div class="shop-pubs" id="shop-publications-list">
+      <div class="empty"><span>🏬</span><h3>Нет публикаций</h3><p>Создайте новое объявление — оно появится здесь после проверки.</p></div>
     </div>
   </div>
 </div>
@@ -1031,22 +1066,41 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 <div id="page-shop-view" class="page">
   <div class="section">
     <button class="back" onclick="goPage('catalog')">← Назад</button>
-    <div class="shop-page-header">
-      <div class="shop-page-top">
-        <div class="shop-profile-avatar" id="shop-view-avatar" style="width:80px;height:80px;font-size:2rem">🏪</div>
-        <div style="flex:1">
-          <div class="shop-page-welcome" id="shop-view-welcome" style="font-size:1.1rem;color:var(--primary);font-weight:600;margin-bottom:4px">Добро пожаловать в магазин</div>
-          <div class="shop-page-title" id="shop-view-name" style="font-size:1.5rem">Профиль магазина</div>
-          <div class="shop-page-sub" id="shop-view-sub">Показаны все публикации магазина</div>
-          <div class="shop-page-desc" id="shop-view-description" style="margin-top:8px;line-height:1.5">Описание магазина</div>
+
+    <!-- Profile card -->
+    <div class="sp-card">
+      <div class="sp-cover" id="shop-view-cover"></div>
+      <div class="sp-body">
+        <div class="sp-top">
+          <div class="sp-avatar-wrap">
+            <div class="sp-avatar" id="shop-view-avatar">🏪</div>
+          </div>
+          <div class="sp-meta">
+            <div class="sp-welcome" id="shop-view-welcome">Добро пожаловать</div>
+            <div class="sp-name" id="shop-view-name">Магазин</div>
+            <div class="sp-sub" id="shop-view-sub">Показаны все публикации магазина</div>
+          </div>
+        </div>
+        <div class="sp-desc" id="shop-view-description">Загрузка…</div>
+        <div class="sp-stats">
+          <div class="sp-stat">
+            <span class="sp-stat-num" id="shop-view-count">—</span>
+            <span class="sp-stat-lbl">публикаций</span>
+          </div>
+          <div class="sp-stat-div"></div>
+          <div class="sp-stat">
+            <span class="sp-stat-num" id="shop-view-phone">—</span>
+            <span class="sp-stat-lbl">телефон</span>
+          </div>
         </div>
       </div>
-      <div class="shop-page-stats" style="display:flex;gap:12px;margin-top:16px">
-        <div class="shop-stat-pill" id="shop-view-count" style="background:linear-gradient(135deg,var(--primary),var(--primary-d));color:white;padding:8px 16px;border-radius:20px;font-weight:600;font-size:.9rem">0 публикаций</div>
-        <div class="shop-stat-pill" id="shop-view-phone" style="background:var(--warm);padding:8px 16px;border-radius:20px;font-weight:600;font-size:.9rem;border:1px solid var(--border)">Телефон: —</div>
-      </div>
     </div>
-    <div class="shop-pubs" id="shop-view-pubs" style="margin-top:32px">
+
+    <!-- Publications list header -->
+    <div class="sp-pubs-header">
+      <span>Публикации магазина</span>
+    </div>
+    <div class="shop-view-grid" id="shop-view-pubs">
       <div class="loader">🌿 Загружаем публикации…</div>
     </div>
   </div>
@@ -1084,12 +1138,13 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <label>Ваша цена (TJS) *</label>
           <input type="number" id="sell-price" placeholder="350" oninput="updatePricePreview()" min="1">
           <div id="price-preview">
-            <div style="display:flex;justify-content:space-between"><span style="color:var(--gray)">Вы получите:</span><span id="price-seller" style="font-weight:700;color:var(--green)"></span></div>
-            <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(34,160,91,.2);margin-top:6px;padding-top:6px"><span style="font-weight:700">Покупатель заплатит:</span><span id="price-total" style="font-weight:700;font-size:1rem"></span></div>
-            <div style="margin-top:6px;font-size:.78rem;color:var(--gray);text-align:center">✅ Комиссия платформы включена в цену</div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--gray)">💵 Вы получите:</span><span id="price-seller" style="font-weight:700;color:var(--green)"></span></div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--gray)">📊 Комиссия ReBuket:</span><span id="price-commission" style="font-weight:600;color:#e67e22"></span></div>
+            <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(34,160,91,.2);margin-top:6px;padding-top:6px"><span style="font-weight:700">🛒 Покупатель заплатит:</span><span id="price-total" style="font-weight:700;font-size:1rem"></span></div>
+            <div style="margin-top:8px;font-size:.78rem;color:var(--gray);text-align:center;line-height:1.5">✅ Комиссия платформы уже включена в цену покупателя — вы получаете свою сумму полностью</div>
           </div>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="sell-city-wrap" data-shop-hide>
           <label>Город *</label>
           <select id="sell-city">
             <option value="">— Выберите —</option>
@@ -1099,17 +1154,17 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <option>Регар</option><option>Бустон</option>
           </select>
         </div>
-        <div class="form-group fg-full" style="background:var(--warm);border-radius:16px;padding:18px;border:1.5px solid var(--border)">
-          <p style="font-weight:700;margin-bottom:14px;color:var(--mid)">🔐 Ваши контакты (видит только администратор)</p>
+        <div class="form-group fg-full" id="sell-contact-box" style="background:var(--warm);border-radius:16px;padding:18px;border:1.5px solid var(--border)">
+          <p style="font-weight:700;margin-bottom:14px;color:var(--mid)" id="sell-contact-title">🔐 Ваши контакты (видит только администратор)</p>
           <div class="fgrid">
-            <div class="form-group"><label>Ваше имя</label><input type="text" id="sell-name" placeholder="Алина"></div>
-            <div class="form-group"><label>Телефон *</label><input type="tel" id="sell-phone" placeholder="+992 900 000000"></div>
-            <div class="form-group"><label>Telegram</label><input type="text" id="sell-tg" placeholder="@username"></div>
-            <div class="form-group"><label>Адрес</label><input type="text" id="sell-address" placeholder="ул. Рудаки, 12"></div>
-            <div class="form-group"><label>Время получения</label><input type="text" id="sell-time" placeholder="09:00–21:00 ежедневно"></div>
+            <div class="form-group" data-shop-hide><label>Ваше имя</label><input type="text" id="sell-name" placeholder="Алина"></div>
+            <div class="form-group" data-shop-hide><label>Телефон *</label><input type="tel" id="sell-phone" placeholder="+992 900 000000"></div>
+            <div class="form-group" data-shop-hide><label>Telegram</label><input type="text" id="sell-tg" placeholder="@username"></div>
+            <div class="form-group" data-shop-hide><label>Адрес</label><input type="text" id="sell-address" placeholder="ул. Рудаки, 12"></div>
+            <div class="form-group" data-shop-hide><label>Время получения</label><input type="text" id="sell-time" placeholder="09:00–21:00 ежедневно"></div>
             <div class="form-group" id="market-price-field"><label>Цена в других магазинах <span style="color:var(--gray);font-weight:400">(необязательно)</span></label><input type="number" id="sell-market-price" placeholder="Например: 350" min="0"></div>
             <div class="form-group" id="stock-field"><label>Количество в наличии <span style="color:var(--gray);font-weight:400">(для магазинов)</span></label><input type="number" id="sell-stock" placeholder="Например: 5" min="0"></div>
-            <div class="form-group fg-full" id="size-field">
+            <div class="form-group fg-full" id="size-field" data-shop-hide>
               <label>Размер * <span style="color:var(--gray);font-weight:400">(обязательно)</span></label>
               <div id="size-chips-wrap" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
                 <div id="size-chips" style="display:flex;flex-wrap:wrap;gap:8px">
@@ -1128,7 +1183,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
               <input type="hidden" id="sell-size">
               <div id="size-error" style="display:none;color:var(--red);font-size:.82rem;margin-top:4px">Выберите или введите размер</div>
             </div>
-            <div class="form-group fg-full">
+            <div class="form-group fg-full" data-shop-hide>
               <label>Когда получили * <span style="color:var(--gray);font-weight:400">(обязательно)</span></label>
               <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="gift-when-chips">
                 <button type="button" class="chip" onclick="selectGiftWhen('Только что',this)">⚡ Только что</button>
@@ -1204,6 +1259,10 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <input type="tel" id="reg-phone" placeholder="+992 900 000000">
           </div>
           <div class="form-group" style="margin-top:16px">
+            <label>Адрес магазина *</label>
+            <input type="text" id="reg-address" placeholder="ул. Рудаки, 12">
+          </div>
+          <div class="form-group" style="margin-top:16px">
             <label>Telegram (необязательно)</label>
             <input type="text" id="reg-tg" placeholder="@username">
           </div>
@@ -1269,11 +1328,19 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         <button class="atab active" data-tab="products"  onclick="switchTab('products')">📦 Объявления</button>
         <button class="atab"        data-tab="inquiries" onclick="switchTab('inquiries')">🛒 Заявки</button>
         <button class="atab"        data-tab="orders"    onclick="switchTab('orders')">💳 Заказы</button>
+        <button class="atab"        data-tab="disputes"  onclick="switchTab('disputes')">⚠️ Споры <span id="disputes-badge" style="display:none;background:#ef4444;color:#fff;font-size:.65rem;padding:1px 7px;border-radius:999px;margin-left:4px;font-weight:700"></span></button>
+        <button class="atab"        data-tab="shops"     onclick="switchTab('shops')">🏪 Магазины <span id="shops-badge" style="display:none;background:#f59e0b;color:#fff;font-size:.65rem;padding:1px 7px;border-radius:999px;margin-left:4px;font-weight:700"></span></button>
+        <button class="atab"        data-tab="earnings"  onclick="switchTab('earnings')">💰 Финансы</button>
+        <button class="atab"        data-tab="settings"  onclick="switchTab('settings')">⚙️ Настройки</button>
         <button class="atab"        data-tab="stats"     onclick="switchTab('stats')">📊 Статистика</button>
       </div>
       <div id="tab-products"  class="atab-pane"></div>
       <div id="tab-inquiries" class="atab-pane" style="display:none"></div>
       <div id="tab-orders"    class="atab-pane" style="display:none"></div>
+      <div id="tab-disputes"  class="atab-pane" style="display:none"></div>
+      <div id="tab-shops"     class="atab-pane" style="display:none"></div>
+      <div id="tab-earnings"  class="atab-pane" style="display:none"></div>
+      <div id="tab-settings"  class="atab-pane" style="display:none"></div>
       <div id="tab-stats"     class="atab-pane" style="display:none"></div>
     </div>
   </div>
@@ -1309,6 +1376,19 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     <div class="form-group" style="margin-bottom:14px">
       <label>Описание магазина</label>
       <textarea id="edit-shop-description" placeholder="Коротко расскажите о своём магазине, товарах и доставке" rows="4" style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:14px;font-size:.95rem;line-height:1.5;resize:vertical"></textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Телефон магазина</label>
+      <input type="tel" id="edit-shop-phone" placeholder="+992 900 000000">
+      <small style="color:var(--gray);font-size:.78rem">При изменении номера потребуется заново авторизовать shop-bot командой /start</small>
+    </div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Условия доставки</label>
+      <textarea id="edit-shop-delivery" placeholder="Например: доставка по Душанбе — 50 сом, время сборки 30 мин" rows="2" style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:14px;font-size:.95rem;line-height:1.5;resize:vertical"></textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:14px">
+      <label>Категории (через запятую)</label>
+      <input type="text" id="edit-shop-categories" placeholder="букеты, корзины, мишки">
     </div>
     <div class="form-group" style="margin-bottom:20px">
       <label>Фото магазина (необязательно)</label>
@@ -1400,7 +1480,33 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           </div>
         </button>
       </div>
-      
+
+      <!-- Taxi payer selector (shown only when 'taxi' is chosen) -->
+      <div id="taxi-payer-block" style="display:none;margin-bottom:20px">
+        <p style="font-weight:700;margin-bottom:12px;color:var(--mid);font-size:.9rem">Кто оплачивает доставку?</p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <label class="payer-option" data-payer="buyer" onclick="selectDeliveryPayer('buyer', event)" style="display:flex;align-items:flex-start;gap:12px;padding:14px;border:2px solid var(--border);border-radius:14px;background:#fff;cursor:pointer;transition:all .2s">
+            <span style="font-size:1.4rem">💳</span>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.92rem">Доставку оплачивает покупатель</div>
+              <div style="font-size:.78rem;color:var(--gray);margin-top:2px">Вы платите водителю напрямую при получении</div>
+            </div>
+            <input type="radio" name="taxi-payer" value="buyer" style="margin-top:4px">
+          </label>
+          <label class="payer-option" data-payer="fixed" onclick="selectDeliveryPayer('fixed', event)" style="display:flex;align-items:flex-start;gap:12px;padding:14px;border:2px solid var(--border);border-radius:14px;background:#fff;cursor:pointer;transition:all .2s">
+            <span style="font-size:1.4rem">🧾</span>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.92rem">Фиксированная доставка <span id="taxi-fixed-amount" style="color:var(--green-d)">50 сом</span></div>
+              <div style="font-size:.78rem;color:var(--gray);margin-top:2px">Сумма добавляется к итогу заказа</div>
+            </div>
+            <input type="radio" name="taxi-payer" value="fixed" style="margin-top:4px">
+          </label>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="step2-next" style="width:100%;border-radius:14px;padding:14px;display:none;margin-bottom:8px" onclick="goToCheckoutStep3()">
+        Далее →
+      </button>
       <button class="btn btn-outline" style="width:100%;border-radius:14px;padding:12px" onclick="goToCheckoutStep1()">
         ← Назад
       </button>
@@ -1620,6 +1726,7 @@ function storeDoRegister() {
   var phone     = document.getElementById('reg-phone').value.trim();
   var city      = document.getElementById('reg-city').value;
   var tg        = document.getElementById('reg-tg').value.trim();
+  var address   = document.getElementById('reg-address').value.trim();
   var password  = document.getElementById('reg-pass').value;
   var pass2     = document.getElementById('reg-pass2').value;
   var msgEl     = document.getElementById('reg-msg');
@@ -1629,6 +1736,11 @@ function storeDoRegister() {
   if (!phone || !password) {
     msgEl.style.color = 'var(--red)';
     msgEl.textContent = 'Телефон и пароль обязательны';
+    return;
+  }
+  if (!address) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = 'Укажите адрес магазина';
     return;
   }
   if (password.length < 6) {
@@ -1650,7 +1762,7 @@ function storeDoRegister() {
   fetch('/api/shops/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, password, shop_name, city, telegram: tg })
+    body: JSON.stringify({ phone, password, shop_name, city, telegram: tg, address })
   })
   .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
   .then(function(res) {
@@ -1687,16 +1799,32 @@ let shopPhotoFile = null;
 function openEditShopModal() {
   var modal = document.getElementById('edit-shop-modal');
   if (!modal) return;
-  
-  var name = localStorage.getItem('shop_name') || '';
-  var description = localStorage.getItem('shop_description') || '';
-  document.getElementById('edit-shop-name').value = name;
-  document.getElementById('edit-shop-description').value = description;
+
+  document.getElementById('edit-shop-name').value = localStorage.getItem('shop_name') || '';
+  document.getElementById('edit-shop-description').value = localStorage.getItem('shop_description') || '';
+  var phEl = document.getElementById('edit-shop-phone');
+  if (phEl) phEl.value = localStorage.getItem('shop_phone') || '';
   document.getElementById('shop-photo-preview').style.display = 'none';
   document.getElementById('edit-shop-msg').textContent = '';
   shopPhotoFile = null;
-  
   modal.classList.add('open');
+
+  // Pull fresh data from server (delivery_info, categories) into the form
+  var token = localStorage.getItem('shop_token');
+  if (!token) return;
+  fetch('/api/shops/me', { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) return;
+      if (d.shop_name)   document.getElementById('edit-shop-name').value = d.shop_name;
+      if (typeof d.description === 'string') document.getElementById('edit-shop-description').value = d.description;
+      if (d.phone && phEl) phEl.value = d.phone;
+      var del = document.getElementById('edit-shop-delivery');
+      if (del && typeof d.delivery_info === 'string') del.value = d.delivery_info;
+      var cats = document.getElementById('edit-shop-categories');
+      if (cats && Array.isArray(d.categories)) cats.value = d.categories.join(', ');
+    })
+    .catch(function(){});
 }
 
 function previewShopPhoto(event) {
@@ -1732,6 +1860,12 @@ function saveShopProfile() {
   var fd = new FormData();
   fd.append('shop_name', name);
   fd.append('description', document.getElementById('edit-shop-description').value.trim());
+  var newPhoneEl = document.getElementById('edit-shop-phone');
+  if (newPhoneEl && newPhoneEl.value.trim()) fd.append('new_phone', newPhoneEl.value.trim());
+  var deliveryEl = document.getElementById('edit-shop-delivery');
+  if (deliveryEl) fd.append('delivery_info', deliveryEl.value.trim());
+  var catsEl = document.getElementById('edit-shop-categories');
+  if (catsEl) fd.append('categories', catsEl.value.trim());
   if (shopPhotoFile) {
     fd.append('photo', shopPhotoFile);
   }
@@ -1764,6 +1898,12 @@ function saveShopProfile() {
     }
     if (typeof res.d.description === 'string') {
       localStorage.setItem('shop_description', res.d.description);
+    }
+    if (res.d.token) {
+      localStorage.setItem('shop_token', res.d.token);
+    }
+    if (res.d.phone) {
+      localStorage.setItem('shop_phone', res.d.phone);
     }
     
     updateShopUI();
@@ -1850,29 +1990,28 @@ function updateCartUI() {
         return `
         <div class="cart-item" id="ci-${idx}">
           <div class="ci-img">
-            ${item.img ? `<img src="${item.img}" alt="${item.title}">` : (item.emoji || '🌸')}
+            ${item.img ? `<img src="${item.img}" alt="${item.title}">` : `<span style="font-size:2rem">${item.emoji || '🌸'}</span>`}
           </div>
           <div class="ci-info">
             <div class="ci-title">${item.title}</div>
-            ${item.seller_name || item.seller_phone ? `
-              <div class="ci-seller" onclick="viewShopProfile('${item.seller_phone || ''}')" style="cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:4px;padding:4px 8px;background:var(--warm);border-radius:8px;border:1px solid var(--border)">
-                ${item.seller_photo ? `<img src="${item.seller_photo}" style="width:20px;height:20px;border-radius:50%;object-fit:cover">` : ''}
-                <span style="font-size:.75rem;color:var(--mid)">${item.seller_name || item.seller_phone || 'Магазин'}</span>
-              </div>
-            ` : ''}
+            ${item.seller_name ? `<div style="font-size:.74rem;color:var(--gray);margin-bottom:3px">🏪 ${item.seller_name}</div>` : ''}
             <div class="ci-sub">
               ${item.city ? `<span>📍 ${item.city}</span>` : ''}
               ${item.city && item.size ? `<span class="ci-sub-dot"></span>` : ''}
               ${item.size ? `<span>📐 ${item.size}</span>` : ''}
             </div>
-            <div class="ci-price">${(item.price || 0).toLocaleString('ru')} сом.</div>
+            <div class="ci-bottom">
+              <div class="ci-price">${((item.price || 0) * qty).toLocaleString('ru')} сом.</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="ci-qty">
+                  <button class="ci-qty-btn" onclick="window.changeCartItemQty(${idx}, -1)" aria-label="Уменьшить">−</button>
+                  <span class="ci-qty-val">${qty}</span>
+                  <button class="ci-qty-btn" onclick="window.changeCartItemQty(${idx}, 1)" aria-label="Увеличить">+</button>
+                </div>
+                <button class="ci-remove" onclick="window.removeFromCart(${idx})" title="Удалить">✕</button>
+              </div>
+            </div>
           </div>
-          <div class="ci-qty">
-            <button class="ci-qty-btn" onclick="window.changeCartItemQty(${idx}, -1)">−</button>
-            <span class="ci-qty-val">${qty}</span>
-            <button class="ci-qty-btn" onclick="window.changeCartItemQty(${idx}, 1)">+</button>
-          </div>
-          <button class="ci-remove" onclick="window.removeFromCart(${idx})" title="Удалить">✕</button>
         </div>
       `}).join('')}
     `;
@@ -1958,16 +2097,63 @@ window.goToCheckoutStep1 = () => {
 
 window.selectDelivery = (type) => {
   window.checkoutDelivery = type;
-  document.getElementById('checkout-step-2').style.display = 'none';
-  document.getElementById('checkout-step-3').style.display = 'block';
-  
   // Highlight selected option
   document.querySelectorAll('.delivery-option').forEach(btn => {
     btn.style.borderColor = 'var(--border)';
     btn.style.background = '#fff';
   });
-  event.currentTarget.style.borderColor = 'var(--green)';
-  event.currentTarget.style.background = 'rgba(34,160,91,.05)';
+  if (event && event.currentTarget) {
+    event.currentTarget.style.borderColor = 'var(--green)';
+    event.currentTarget.style.background = 'rgba(34,160,91,.05)';
+  }
+
+  const payerBlock = document.getElementById('taxi-payer-block');
+  const nextBtn = document.getElementById('step2-next');
+
+  if (type === 'taxi') {
+    // show payer selector; reveal Step 3 only after payer chosen
+    window.checkoutDeliveryPayer = null;
+    payerBlock.style.display = 'block';
+    nextBtn.style.display = 'none';
+    // refresh fixed amount from server settings
+    fetch('/api/platform-settings').then(r => r.json()).then(s => {
+      const amt = Number(s.taxi_fixed_fee || 50);
+      const el = document.getElementById('taxi-fixed-amount');
+      if (el) el.textContent = amt.toLocaleString('ru') + ' сом';
+    }).catch(() => {});
+  } else {
+    // pickup → straight to step 3
+    window.checkoutDeliveryPayer = 'pickup';
+    payerBlock.style.display = 'none';
+    document.getElementById('checkout-step-2').style.display = 'none';
+    document.getElementById('checkout-step-3').style.display = 'block';
+  }
+};
+
+window.selectDeliveryPayer = (payer, ev) => {
+  window.checkoutDeliveryPayer = payer;
+  document.querySelectorAll('.payer-option').forEach(el => {
+    el.style.borderColor = 'var(--border)';
+    el.style.background = '#fff';
+    const r = el.querySelector('input[type=radio]');
+    if (r) r.checked = (el.dataset.payer === payer);
+  });
+  const tgt = ev && ev.currentTarget;
+  if (tgt) {
+    tgt.style.borderColor = 'var(--green)';
+    tgt.style.background = 'rgba(34,160,91,.05)';
+  }
+  document.getElementById('step2-next').style.display = 'block';
+};
+
+window.goToCheckoutStep3 = () => {
+  if (window.checkoutDelivery === 'taxi' && !window.checkoutDeliveryPayer) {
+    const m = document.getElementById('checkout-msg');
+    if (m) { m.style.color = 'var(--red)'; m.textContent = 'Выберите кто оплачивает доставку'; }
+    return;
+  }
+  document.getElementById('checkout-step-2').style.display = 'none';
+  document.getElementById('checkout-step-3').style.display = 'block';
 };
 
 window.resetCheckoutForm = () => {
@@ -1985,7 +2171,18 @@ window.resetCheckoutForm = () => {
   document.getElementById('receipt-preview').style.display = 'none';
   document.getElementById('checkout-receipt').value = '';
   window.checkoutDelivery = null;
+  window.checkoutDeliveryPayer = null;
   window.checkoutReceiptFile = null;
+  const payerBlock = document.getElementById('taxi-payer-block');
+  if (payerBlock) payerBlock.style.display = 'none';
+  const nextBtn = document.getElementById('step2-next');
+  if (nextBtn) nextBtn.style.display = 'none';
+  document.querySelectorAll('.payer-option').forEach(el => {
+    el.style.borderColor = 'var(--border)';
+    el.style.background = '#fff';
+    const r = el.querySelector('input[type=radio]');
+    if (r) r.checked = false;
+  });
 };
 
 window.previewReceipt = (event) => {
@@ -2037,6 +2234,7 @@ window.completeCheckout = async () => {
   fd.append('customer_phone', phone);
   fd.append('customer_address', address);
   fd.append('delivery_type', delivery);
+  if (window.checkoutDeliveryPayer) fd.append('delivery_payer', window.checkoutDeliveryPayer);
   fd.append('total', total);
   fd.append('items', JSON.stringify(window._cart));
   fd.append('receipt', receiptFile);

@@ -38,6 +38,11 @@ function showDash() {
   document.getElementById('a-dash').style.display  = '';
   loadDashStats();
   switchTab('products');
+  updateDisputesBadge();
+  // Poll disputes badge every 30s so admin sees new disputes promptly
+  if (!window._disputesBadgePoll) {
+    window._disputesBadgePoll = setInterval(updateDisputesBadge, 30000);
+  }
 }
 
 async function loadDashStats() {
@@ -64,7 +69,258 @@ window.switchTab = async name => {
   if (name==='products')  await renderProducts();
   if (name==='inquiries') await renderInquiries();
   if (name==='orders')    await renderOrders();
+  if (name==='disputes')  await renderDisputes();
+  if (name==='shops')     await renderShops();
+  if (name==='earnings')  await renderEarnings();
+  if (name==='settings')  await renderSettings();
   if (name==='stats')     await renderStats();
+};
+
+// ─── Disputes (refund_requested / refund_disputed) ──────────
+let _disputesFilter = ''; // '' | 'refund_requested' | 'refund_disputed'
+let _disputesSearch = '';
+let _disputesSearchTimer = null;
+
+async function renderDisputes() {
+  const el = document.getElementById('tab-disputes');
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <input id="dis-search" type="text" placeholder="🔍 Поиск по заказу / телефону / причине…" value="${_disputesSearch}" oninput="setDisputesSearch(this.value)" style="flex:1;min-width:200px;padding:9px 14px;border:1.5px solid var(--border);border-radius:12px;font-size:.9rem">
+      <div style="display:flex;gap:6px">
+        <button class="atab ${!_disputesFilter ? 'active':''}" onclick="setDisputesFilter('')">Все</button>
+        <button class="atab ${_disputesFilter==='refund_requested' ? 'active':''}" onclick="setDisputesFilter('refund_requested')">⚠️ Запрошены</button>
+        <button class="atab ${_disputesFilter==='refund_disputed' ? 'active':''}" onclick="setDisputesFilter('refund_disputed')">🔴 Оспорены</button>
+      </div>
+    </div>
+    <div id="dis-list"><div class="loader">Загружаем…</div></div>`;
+
+  const q = new URLSearchParams();
+  if (_disputesFilter) q.set('status', _disputesFilter);
+  if (_disputesSearch) q.set('search', _disputesSearch);
+  try {
+    const r = await fetch('/api/admin/disputes?' + q.toString(), {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+    });
+    const d = await r.json();
+    const list = document.getElementById('dis-list');
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    const rows = d.data || [];
+    if (!rows.length) {
+      list.innerHTML = '<div class="empty"><span>✅</span><h3>Споров нет</h3><p style="color:var(--gray)">Все заказы в норме.</p></div>';
+      return;
+    }
+    const fmt = n => Number(n||0).toLocaleString('ru');
+    const statusLabel = { refund_requested:'⚠️ Запрошен возврат', refund_disputed:'🔴 Оспорен магазином' };
+    list.innerHTML = rows.map(o => {
+      const items = Array.isArray(o.items) ? o.items : [];
+      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1}`).join('<br>');
+      const shop = o.shop || {};
+      return `<div class="acard" style="border-color:rgba(239,68,68,.35);box-shadow:0 0 0 3px rgba(239,68,68,.06);margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <span class="bd-r" style="font-size:.72rem">${statusLabel[o.status]||o.status}</span>
+              <span style="font-size:.75rem;color:var(--gray)">${fmtD(o.created_at)}</span>
+            </div>
+            <div class="acard-title">Заказ #${o.id}</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">📞 ${esc(o.customer_phone)}</div>
+            <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${fmt(o.total)} сом</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--warm);padding:8px 12px;border-radius:12px">
+            ${shop.photo_url ? `<img src="${shop.photo_url}" style="width:32px;height:32px;border-radius:8px;object-fit:cover">` : `<div style="width:32px;height:32px;border-radius:8px;background:#fff;display:grid;place-items:center">🏪</div>`}
+            <div>
+              <div style="font-weight:600;font-size:.85rem">${esc(shop.shop_name || shop.phone || '—')}</div>
+              <div style="font-size:.72rem;color:var(--gray)">${esc(shop.phone || '')}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;padding:12px;background:var(--warm);border-radius:8px;font-size:.82rem;color:var(--mid)">
+          <div style="font-weight:700;margin-bottom:4px">Товары:</div>
+          ${itemsList}
+        </div>
+
+        ${o.refund_reason ? `<div style="margin-top:10px;padding:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;color:#7f1d1d">
+          <div style="font-weight:700;font-size:.85rem;margin-bottom:4px">📝 Причина клиента:</div>
+          <div style="font-size:.9rem;white-space:pre-wrap">${esc(o.refund_reason)}</div>
+        </div>` : ''}
+
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          ${o.chat_active ? `<button class="btn btn-outline" style="padding:8px 14px;font-size:.82rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button>` : ''}
+          ${o.receipt_url ? `<a href="${esc(o.receipt_url)}" target="_blank" class="btn btn-outline" style="padding:8px 14px;font-size:.82rem;text-decoration:none">📸 Чек</a>` : ''}
+          <button class="btn" style="padding:8px 14px;font-size:.82rem;background:#ef4444;color:#fff;border:0;border-radius:12px" onclick="resolveDispute('${o.id}','refund')">💸 Вернуть деньги</button>
+          <button class="btn btn-primary" style="padding:8px 14px;font-size:.82rem" onclick="resolveDispute('${o.id}','reject')">✅ В пользу магазина</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dis-list').innerHTML = `<div class="empty"><span>❌</span><h3>${e.message}</h3></div>`;
+  }
+}
+
+window.setDisputesFilter = (val) => { _disputesFilter = val; renderDisputes(); };
+window.setDisputesSearch = (val) => {
+  _disputesSearch = val;
+  clearTimeout(_disputesSearchTimer);
+  _disputesSearchTimer = setTimeout(renderDisputes, 400);
+};
+
+window.resolveDispute = async (id, action) => {
+  const labelAction = action === 'refund' ? 'вернуть деньги клиенту' : 'закрыть спор в пользу магазина';
+  const note = prompt(`Решение: ${labelAction}\n\nДобавьте комментарий (необязательно):`, '');
+  if (note === null) return; // user cancelled
+  try {
+    const res = await fetch('/api/admin/orders/' + encodeURIComponent(id) + '/dispute-resolve', {
+      method: 'PATCH',
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, note: note.trim() }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Ошибка');
+    toast(action === 'refund' ? '✅ Возврат оформлен' : '✅ Спор закрыт в пользу магазина', 'success');
+    renderDisputes();
+    updateDisputesBadge();
+  } catch (e) {
+    toast('Ошибка: ' + e.message, 'err');
+  }
+};
+
+// Refresh disputes badge — count of unresolved disputes
+async function updateDisputesBadge() {
+  try {
+    const r = await fetch('/api/admin/disputes', {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+    });
+    const d = await r.json();
+    if (!r.ok) return;
+    const n = (d.data || []).length;
+    const el = document.getElementById('disputes-badge');
+    if (!el) return;
+    if (n > 0) { el.textContent = String(n); el.style.display = 'inline-block'; }
+    else      { el.style.display = 'none'; }
+  } catch (_) {}
+}
+window.updateDisputesBadge = updateDisputesBadge;
+
+// ─── Earnings (marketplace finance dashboard) ───────────────
+async function renderEarnings() {
+  const el = document.getElementById('tab-earnings');
+  el.innerHTML = `
+    <div class="earnings-skeleton" style="display:grid;gap:12px">
+      ${Array(4).fill('<div style="height:88px;border-radius:16px;background:linear-gradient(90deg,#f3f4f6,#e9eaee,#f3f4f6);background-size:200% 100%;animation:shimmer 1.4s infinite"></div>').join('')}
+    </div>
+    <style>@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}</style>`;
+  try {
+    const token = localStorage.getItem('admin_token');
+    const r = await fetch('/api/admin/earnings', { headers: { Authorization: 'Bearer ' + token } });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    const t = d.totals || {};
+    const fmt = n => Number(n||0).toLocaleString('ru');
+    const kpiCard = (label, value, sub, color) => `
+      <div style="background:#fff;border:1.5px solid var(--border);border-radius:18px;padding:18px 20px;box-shadow:0 2px 8px rgba(0,0,0,.04)">
+        <div style="font-size:.78rem;color:var(--gray);text-transform:uppercase;letter-spacing:.5px;font-weight:600">${label}</div>
+        <div style="font-size:1.7rem;font-weight:800;margin-top:6px;color:${color||'var(--black)'}">${fmt(value)} <span style="font-size:.85rem;font-weight:600;color:var(--gray)">сом</span></div>
+        ${sub ? `<div style="font-size:.78rem;color:var(--gray);margin-top:4px">${sub}</div>` : ''}
+      </div>`;
+    el.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:22px">
+        ${kpiCard('Выручка (общая)', t.revenue, `Заказов: ${t.orders||0}`)}
+        ${kpiCard('Комиссия платформы', t.commission, `Реализовано: ${fmt(t.completed_commission||0)} сом`, 'var(--green-d)')}
+        ${kpiCard('К выплате магазинам', t.payouts, `Доставка: ${fmt(t.delivery||0)} сом`)}
+        ${kpiCard('Завершённых заказов', t.completed_orders||0, `из ${t.orders||0} всего`)}
+      </div>
+      <div style="background:#fff;border:1.5px solid var(--border);border-radius:18px;overflow:hidden">
+        <div style="padding:16px 20px;border-bottom:1.5px solid var(--border);font-weight:700">Магазины · разбивка по выплатам</div>
+        ${(d.by_shop||[]).length ? `
+          <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:600px">
+            <thead><tr style="background:var(--warm)">
+              <th style="text-align:left;padding:10px 16px;font-size:.78rem;color:var(--gray);font-weight:600">Магазин</th>
+              <th style="text-align:right;padding:10px 16px;font-size:.78rem;color:var(--gray);font-weight:600">Заказов</th>
+              <th style="text-align:right;padding:10px 16px;font-size:.78rem;color:var(--gray);font-weight:600">Оборот</th>
+              <th style="text-align:right;padding:10px 16px;font-size:.78rem;color:var(--gray);font-weight:600">Комиссия</th>
+              <th style="text-align:right;padding:10px 16px;font-size:.78rem;color:var(--gray);font-weight:600">К выплате</th>
+            </tr></thead>
+            <tbody>
+              ${d.by_shop.map(s => `
+                <tr style="border-top:1px solid var(--border)">
+                  <td style="padding:12px 16px">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      ${s.photo_url ? `<img src="${s.photo_url}" style="width:34px;height:34px;border-radius:8px;object-fit:cover">` : `<div style="width:34px;height:34px;border-radius:8px;background:var(--warm);display:grid;place-items:center">🏪</div>`}
+                      <div>
+                        <div style="font-weight:600;font-size:.9rem">${(s.shop_name||'').replace(/[<>]/g,'')}</div>
+                        <div style="font-size:.75rem;color:var(--gray)">${s.phone}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="padding:12px 16px;text-align:right;font-variant-numeric:tabular-nums">${s.orders}</td>
+                  <td style="padding:12px 16px;text-align:right;font-variant-numeric:tabular-nums">${fmt(s.gross)}</td>
+                  <td style="padding:12px 16px;text-align:right;font-variant-numeric:tabular-nums;color:var(--green-d);font-weight:600">${fmt(s.commission)}</td>
+                  <td style="padding:12px 16px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${fmt(s.payout)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table></div>
+        ` : `<div style="padding:40px 20px;text-align:center;color:var(--gray)">Пока нет завершённых заказов с разбивкой</div>`}
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="empty"><h3>${e.message}</h3></div>`;
+  }
+}
+
+// ─── Settings (commission, taxi fee) ────────────────────────
+async function renderSettings() {
+  const el = document.getElementById('tab-settings');
+  el.innerHTML = '<div class="loader">Загружаем…</div>';
+  try {
+    const token = localStorage.getItem('admin_token');
+    const r = await fetch('/api/admin/settings', { headers: { Authorization: 'Bearer ' + token } });
+    const s = await r.json();
+    if (!r.ok) throw new Error(s.error || 'Ошибка');
+    el.innerHTML = `
+      <div style="max-width:560px;background:#fff;border:1.5px solid var(--border);border-radius:18px;padding:24px">
+        <h3 style="margin-bottom:6px">Настройки маркетплейса</h3>
+        <p style="color:var(--gray);font-size:.85rem;margin-bottom:20px">Применяются ко всем новым заказам</p>
+        <div class="form-group" style="margin-bottom:16px">
+          <label style="font-weight:600">Комиссия по умолчанию (%)</label>
+          <input type="number" id="set-commission" value="${Number(s.default_commission_percent||20)}" min="0" max="100" step="0.5">
+          <small style="color:var(--gray);font-size:.78rem">Например: магазин ставит 400 сом, комиссия 20% &#8594; покупатель платит 480 сом, магазин получает 400 сом, платформа 80 сом</small>
+        </div>
+        <div class="form-group" style="margin-bottom:24px">
+          <label style="font-weight:600">Фиксированная доставка такси (сом)</label>
+          <input type="number" id="set-taxi" value="${Number(s.taxi_fixed_fee||50)}" min="0" step="1">
+          <small style="color:var(--gray);font-size:.78rem">Используется при выборе «Фиксированная доставка» в чекауте</small>
+        </div>
+        <button class="btn btn-primary" id="save-settings-btn" onclick="saveAdminSettings()" style="width:100%;padding:14px;border-radius:14px">💾 Сохранить</button>
+        <div id="settings-msg" style="margin-top:12px;font-size:.84rem;text-align:center;min-height:20px"></div>
+      </div>`;
+  } catch (e) { el.innerHTML = `<div class="empty"><h3>${e.message}</h3></div>`; }
+}
+
+window.saveAdminSettings = async () => {
+  const btn = document.getElementById('save-settings-btn');
+  const msg = document.getElementById('settings-msg');
+  const token = localStorage.getItem('admin_token');
+  const body = {
+    default_commission_percent: Number(document.getElementById('set-commission').value),
+    taxi_fixed_fee:              Number(document.getElementById('set-taxi').value),
+  };
+  btn.disabled = true; btn.textContent = 'Сохраняем…';
+  try {
+    const r = await fetch('/api/admin/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type':'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    msg.style.color = 'var(--green-d)';
+    msg.textContent = '✅ Настройки сохранены';
+  } catch (e) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 Сохранить';
+  }
 };
 
 let pFilter = '';
@@ -479,44 +735,77 @@ async function renderOrders() {
     const t = document.getElementById('o-table');
     if (!r.data || !r.data.length) { t.innerHTML='<div class="empty"><span>📭</span><h3>Нет заказов</h3></div>'; return; }
     
-    const statusMap = { pending:'bd-y', confirmed:'bd-g', rejected:'bd-r' };
-    const statusLabel = { pending:'⏳ Ожидает', confirmed:'✅ Подтвержден', rejected:'❌ Отклонен' };
+    const statusMap = {
+      pending:'bd-y', payment_confirmed:'bd-g', confirmed:'bd-g',
+      seller_accepted:'bd-g', preparing:'bd-g', ready:'bd-g',
+      delivered:'bd-g', confirmed_received:'bd-g',
+      rejected:'bd-r', refund_requested:'bd-r', refund_disputed:'bd-r', refunded:'bd-r',
+    };
+    const statusLabel = {
+      pending:'⏳ Ожидает оплаты', payment_confirmed:'✅ Оплата подтверждена', confirmed:'✅ Подтверждён',
+      seller_accepted:'🏪 Принят магазином', preparing:'👨‍🍳 Готовится', ready:'📦 Готов',
+      delivered:'🚚 Доставлен', confirmed_received:'🌟 Получен',
+      rejected:'❌ Отклонён', refund_requested:'⚠️ Запрос возврата', refund_disputed:'⚠️ Спор о возврате', refunded:'💸 Возвращён',
+    };
     const deliveryLabel = { pickup:'🏪 Самовывоз', taxi:'🚕 Такси' };
-    
+    const payerLabel = { buyer:'Платит покупатель', fixed:'Фикс. доставка', pickup:'Самовывоз' };
+    const fmt = n => Number(n||0).toLocaleString('ru');
+    const isDispute = st => ['refund_requested','refund_disputed'].includes(st);
+
     t.innerHTML = r.data.map(o => {
       const st = o.status || 'pending';
-      const items = JSON.parse(o.items || '[]');
-      const itemsList = items.map(i => `• ${i.title} — ${(i.price||0).toLocaleString('ru')} сом.`).join('<br>');
-      
-      return `<div class="acard">
+      let items = [];
+      try { items = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []); } catch(_) {}
+      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1} — ${fmt(i.line_total || i.price)} сом.`).join('<br>');
+
+      const finance = (o.subtotal != null) ? `
+        <div style="margin-top:8px;padding:10px 12px;background:rgba(34,160,91,.06);border-radius:10px;font-size:.78rem;display:grid;grid-template-columns:1fr auto;gap:4px 12px">
+          <span style="color:var(--gray)">Подытог</span><span style="text-align:right">${fmt(o.subtotal)} сом</span>
+          ${Number(o.delivery_fee||0) > 0 ? `<span style="color:var(--gray)">Доставка</span><span style="text-align:right">${fmt(o.delivery_fee)} сом</span>` : ''}
+          <span style="color:var(--gray)">Комиссия (${Number(o.commission_percent||0)}%)</span><span style="text-align:right;color:var(--green-d);font-weight:600">${fmt(o.platform_fee)} сом</span>
+          <span style="color:var(--gray)">К выплате магазину</span><span style="text-align:right;font-weight:600">${fmt(o.seller_payout)} сом</span>
+        </div>` : '';
+
+      return `<div class="acard" ${isDispute(st) ? 'style="border-color:rgba(239,68,68,.4);box-shadow:0 0 0 3px rgba(239,68,68,.08)"' : ''}>
         <div class="acard-top">
           <div class="acard-info">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
               <span class="${statusMap[st]||'bd-y'}" style="font-size:.72rem">${statusLabel[st]||st}</span>
               <span style="font-size:.75rem;color:var(--gray)">${fmtD(o.created_at)}</span>
+              ${o.chat_active ? '<span style="font-size:.7rem;background:rgba(34,160,91,.12);color:var(--green-d);padding:2px 8px;border-radius:999px;font-weight:600">💬 Чат активен</span>' : ''}
             </div>
             <div class="acard-title">Заказ #${o.id}</div>
             <div style="font-size:.78rem;color:var(--gray);margin-top:3px">📞 ${esc(o.customer_phone)}</div>
             <div style="font-size:.78rem;color:var(--gray)">📍 ${esc(o.customer_address)}</div>
-            <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}</div>
-            <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${(o.total||0).toLocaleString('ru')} сом.</div>
+            <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}${o.delivery_payer ? ' · ' + (payerLabel[o.delivery_payer] || o.delivery_payer) : ''}</div>
+            <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${fmt(o.total)} сом.</div>
           </div>
         </div>
-        
+
         <div style="margin-top:12px;padding:12px;background:var(--warm);border-radius:8px;font-size:.82rem;color:var(--mid)">
           <div style="font-weight:700;margin-bottom:4px">Товары:</div>
           ${itemsList}
         </div>
-        
-        ${o.receipt_url ? `<div style="margin-top:8px"><a href="${esc(o.receipt_url)}" target="_blank" class="btn btn-outline" style="padding:6px 12px;font-size:.8rem">📸 Чек оплаты</a></div>` : ''}
-        
+
+        ${finance}
+
+        ${o.refund_reason ? `<div style="margin-top:8px;padding:10px 12px;background:rgba(239,68,68,.08);border-radius:10px;font-size:.82rem;color:#7f1d1d;border:1px solid rgba(239,68,68,.2)">
+          <div style="font-weight:700;margin-bottom:2px">⚠️ Причина возврата:</div>
+          <div>${esc(o.refund_reason)}</div>
+        </div>` : ''}
+
+        ${o.receipt_url ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <a href="${esc(o.receipt_url)}" target="_blank" class="btn btn-outline" style="padding:6px 12px;font-size:.8rem">📸 Чек оплаты</a>
+          ${o.chat_active ? `<button class="btn btn-outline" style="padding:6px 12px;font-size:.8rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button>` : ''}
+        </div>` : (o.chat_active ? `<div style="margin-top:8px"><button class="btn btn-outline" style="padding:6px 12px;font-size:.8rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button></div>` : '')}
+
         ${o.receiver_name ? `<div style="margin-top:8px;padding:10px;background:#f0f9ff;border-radius:8px;font-size:.82rem;color:#0c4a6e">
           <div style="font-weight:700;margin-bottom:4px">👤 Получит другой человек:</div>
           <div>Имя: ${esc(o.receiver_name)}</div>
           <div>Телефон: ${esc(o.receiver_phone)}</div>
           <div>Адрес: ${esc(o.receiver_address)}</div>
         </div>` : ''}
-        
+
         ${st === 'pending' ? `<div style="margin-top:12px;display:flex;gap:8px">
           <button class="btn btn-primary" style="flex:1;padding:8px;font-size:.8rem" onclick="confirmOrder('${o.id}')">✅ Подтвердить</button>
           <button class="btn btn-outline" style="flex:1;padding:8px;font-size:.8rem" onclick="rejectOrder('${o.id}')">❌ Отклонить</button>
@@ -525,6 +814,57 @@ async function renderOrders() {
     }).join('');
   } catch(e) { console.error(e); t.innerHTML='<div class="empty"><span>❌</span><h3>Ошибка загрузки</h3></div>'; }
 }
+
+window.adminViewChat = async (orderId) => {
+  // Create or reuse modal
+  let modal = document.getElementById('admin-chat-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'admin-chat-modal';
+    modal.className = 'overlay';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:560px;padding:0;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-weight:700">💬 Чат заказа</div>
+            <div id="admin-chat-order-id" style="font-size:.78rem;color:var(--gray)"></div>
+          </div>
+          <button class="modal-x" onclick="document.getElementById('admin-chat-modal').classList.remove('open')" style="position:static">✕</button>
+        </div>
+        <div id="admin-chat-msgs" class="chat-msgs" style="max-height:60vh"></div>
+        <div style="padding:12px 16px;border-top:1px solid var(--border);font-size:.78rem;color:var(--gray);text-align:center">Только просмотр · модерация споров</div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  document.getElementById('admin-chat-order-id').textContent = '#' + orderId;
+  const list = document.getElementById('admin-chat-msgs');
+  list.innerHTML = '<div class="loader">Загружаем…</div>';
+  modal.classList.add('open');
+  try {
+    const r = await fetch('/api/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    const msgs = d.data || [];
+    if (!msgs.length) {
+      list.innerHTML = '<div style="text-align:center;color:var(--gray);font-size:.85rem;padding:24px">Сообщений пока нет</div>';
+      return;
+    }
+    const escHtml = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const fmtTime = ts => { try { return new Date(ts).toLocaleString('ru', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }); } catch { return ''; } };
+    list.innerHTML = msgs.map(m => {
+      const role = m.sender;
+      const cls = role === 'shop' ? 'shop' : (role === 'system' || role === 'admin') ? 'system' : 'customer';
+      if (cls === 'system') return `<div class="chat-msg system">${escHtml(m.text || '')}</div>`;
+      const who = role === 'shop' ? '🏪 Магазин' : '👤 Клиент';
+      return `<div class="chat-msg ${cls}"><div style="font-size:.7rem;opacity:.7;margin-bottom:2px">${who}</div>${escHtml(m.text || (m.photo_url ? '📷 фото' : ''))}<div class="meta">${fmtTime(m.created_at)}</div></div>`;
+    }).join('');
+    list.scrollTop = list.scrollHeight;
+  } catch (e) {
+    list.innerHTML = '<div style="text-align:center;color:var(--red);padding:24px">' + (e.message || 'Ошибка') + '</div>';
+  }
+};
 
 window.confirmOrder = async (id) => {
   try {

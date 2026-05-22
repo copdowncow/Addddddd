@@ -3,6 +3,7 @@
 const { getClient, uploadPhoto } = require('../db/supabase');
 const sharp = require('sharp');
 const { notifyAdminAboutOrder } = require('../services/telegram');
+const Commission = require('../services/commission');
 
 async function processImage(file) {
   let buffer = file.buffer;
@@ -28,6 +29,7 @@ exports.createOrder = async (req, res) => {
       customer_phone,
       customer_address,
       delivery_type,
+      delivery_payer,        // 'buyer' | 'fixed' (only meaningful for delivery_type=taxi)
       total,
       items,
       receiver_name,
@@ -38,7 +40,7 @@ exports.createOrder = async (req, res) => {
 
     const receiptFile = req.file;
 
-    if (!customer_phone || !customer_address || !delivery_type || !total || !items) {
+    if (!customer_phone || !customer_address || !delivery_type || !items) {
       return res.status(400).json({ error: 'Заполните все обязательные поля' });
     }
 
@@ -56,28 +58,99 @@ exports.createOrder = async (req, res) => {
     if (!Array.isArray(parsedItems) || parsedItems.length === 0) {
       return res.status(400).json({ error: 'Корзина пуста' });
     }
-    
-    // Get active shop phones
+
+    // Get active shop phones + per-shop commission overrides
     const { data: activeShops } = await getClient()
       .from('shops')
-      .select('phone')
+      .select('phone, commission_percent')
       .eq('status', 'active');
-    const shopPhoneSet = new Set((activeShops || []).map(s => (s.phone || '').toString().trim()));
-    
-    // Get product details for each item to verify seller_phone
+    const shopByPhone = new Map();
+    for (const s of (activeShops || [])) {
+      shopByPhone.set((s.phone || '').toString().trim(), s);
+    }
+    const shopPhoneSet = new Set(shopByPhone.keys());
+
+    // Fetch full product details for commission + integrity check
     const productIds = parsedItems.map(it => it.id || it.pub_id).filter(Boolean);
+    const productById = new Map();
     if (productIds.length > 0) {
       const { data: prods } = await getClient()
         .from('products')
-        .select('id, seller_phone, title')
+        .select('id, seller_phone, title, price, commission_percent, pricing_mode')
         .in('id', productIds);
+      for (const p of (prods || [])) productById.set(p.id, p);
       const ecoItems = (prods || []).filter(p => !shopPhoneSet.has((p.seller_phone || '').toString().trim()));
       if (ecoItems.length > 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'В корзине есть эко-товары. Эко-товары заказываются через Telegram, а не через корзину.',
           eco_items: ecoItems.map(p => p.title)
         });
       }
+    }
+
+    // ── Commission breakdown per item ──────────────────────
+    const settings = await Commission.getPlatformSettings();
+    let subtotal = 0;
+    let platform_fee_total = 0;
+    let seller_payout_total = 0;
+    let commission_percent_sample = null;
+
+    const enrichedItems = parsedItems.map(it => {
+      const pid = it.id || it.pub_id;
+      const prod = productById.get(pid);
+      const sellerPhone = (it.seller_phone || prod?.seller_phone || '').toString().trim();
+      const shop = shopByPhone.get(sellerPhone);
+      const pct = Commission.effectivePercent(prod, shop, settings);
+      const mode = Commission.effectiveMode(prod);
+      // Trust DB price over client-supplied to prevent tampering
+      const listed = Number(prod?.price ?? it.price) || 0;
+      const qty = Math.max(1, Number(it.qty || 1));
+      const br = Commission.calculate(listed, pct, mode);
+      const lineCustomer = Commission.round2(br.customer_pays * qty);
+      const linePlatform = Commission.round2(br.platform_fee * qty);
+      const linePayout   = Commission.round2(br.seller_payout * qty);
+      subtotal += lineCustomer;
+      platform_fee_total += linePlatform;
+      seller_payout_total += linePayout;
+      commission_percent_sample = pct;
+      return {
+        ...it,
+        id: pid,
+        seller_phone: sellerPhone,
+        price: br.customer_pays,         // what customer pays per unit
+        qty,
+        commission_percent: pct,
+        pricing_mode: br.pricing_mode,
+        platform_fee: linePlatform,
+        seller_payout: linePayout,
+        line_total: lineCustomer,
+      };
+    });
+    subtotal = Commission.round2(subtotal);
+    platform_fee_total = Commission.round2(platform_fee_total);
+    seller_payout_total = Commission.round2(seller_payout_total);
+
+    // ── Delivery payer + fee ───────────────────────────────
+    let final_delivery_payer = 'pickup';
+    let delivery_fee = 0;
+    if (delivery_type === 'taxi') {
+      if (delivery_payer === 'fixed') {
+        final_delivery_payer = 'fixed';
+        delivery_fee = Number(settings.taxi_fixed_fee) || 50;
+      } else {
+        // default: buyer pays taxi separately to driver — 0 in order total
+        final_delivery_payer = 'buyer';
+        delivery_fee = 0;
+      }
+    } else if (delivery_type === 'pickup') {
+      final_delivery_payer = 'pickup';
+    }
+
+    const total_final = Commission.round2(subtotal + delivery_fee);
+
+    // Optional client-provided total: warn if drastically different but trust server calc
+    if (total && Math.abs(Number(total) - total_final) > 1) {
+      console.warn('[createOrder] client total', total, 'differs from server-computed', total_final);
     }
 
     // Process and upload receipt
@@ -90,8 +163,14 @@ exports.createOrder = async (req, res) => {
         customer_phone,
         customer_address,
         delivery_type,
-        total: Number(total),
-        items: parsedItems,
+        delivery_payer: final_delivery_payer,
+        delivery_fee,
+        subtotal,
+        commission_percent: commission_percent_sample,
+        platform_fee: platform_fee_total,
+        seller_payout: seller_payout_total,
+        total: total_final,
+        items: enrichedItems,
         receipt_url,
         receiver_name: receiver_name || null,
         receiver_phone: receiver_phone || null,
@@ -198,14 +277,15 @@ exports.updateOrderStatus = async (req, res) => {
 
     if (error) throw error;
 
-    // After admin confirms payment, notify seller
+    // After admin confirms payment, activate chat + notify seller + notify customer
     if (newStatus === 'payment_confirmed') {
-      console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— notifying seller');
+      console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— activating chat + notifying seller');
       try {
-        const { notifySellerAboutOrder } = require('../services/telegram');
+        const { activateOrderChatFlow, notifySellerAboutOrder } = require('../services/telegram');
+        await activateOrderChatFlow(data);
         await notifySellerAboutOrder(data);
       } catch (e) {
-        console.error('[updateOrderStatus] Seller notify failed:', e.message);
+        console.error('[updateOrderStatus] activate/notify failed:', e.message);
       }
     }
 

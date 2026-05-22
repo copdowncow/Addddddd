@@ -153,59 +153,46 @@ export async function viewShopProfile(phone) {
   if (subEl) subEl.textContent = 'Загружаем информацию о магазине...';
   if (descEl) descEl.textContent = '';
   if (phoneEl) phoneEl.textContent = '';
-  if (countEl) countEl.textContent = 'Загрузка…';
-  if (listEl) listEl.innerHTML = '<div class="loader">🌿 Загружаем публикации…</div>';
+  if (countEl) countEl.textContent = '…';
+  if (listEl) listEl.innerHTML = '<div class="loader">🌿 Загружаем…</div>';
   
   try {
-    // Fetch shop info using existing shops-pub endpoint
-    const resp = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(phone) + '&limit=1');
-    if (!resp.ok) {
-      console.error('Shop fetch failed:', resp.status, resp.statusText);
-      throw new Error('Failed to fetch shop info');
-    }
-    const r = await resp.json();
-    const shop = Array.isArray(r.data) && r.data.length ? r.data[0] : null;
-    
-    if (!shop) {
-      throw new Error('Shop not found');
-    }
-    
-    if (nameEl) nameEl.textContent = shop.shop_name || 'Магазин';
-    if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать в ' + (shop.shop_name || 'магазин');
-    if (subEl) subEl.textContent = 'Показаны все публикации магазина';
-    if (descEl) descEl.textContent = shop.description || 'У этого магазина пока нет описания.';
-    
-    // Display photo if available
-    if (avatar) {
-      if (shop.photo_url) {
-        avatar.innerHTML = '<img src="' + esc(shop.photo_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
-        avatar.style.background = 'transparent';
-      } else {
-        avatar.textContent = getShopAvatar(shop.shop_name || 'Магазин');
-        avatar.style.background = '#ffffff';
+    // Fetch shop info
+    const resp = await fetch('/api/shops/by-phone?phone=' + encodeURIComponent(phone));
+    if (resp.ok) {
+      const shopInfo = await resp.json();
+      if (nameEl) nameEl.textContent = shopInfo.shop_name || 'Магазин';
+      if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
+      if (subEl) subEl.textContent = shopInfo.shop_name || 'Магазин';
+      if (descEl) descEl.textContent = shopInfo.description || 'У этого магазина пока нет описания.';
+      if (phoneEl) phoneEl.textContent = shopInfo.phone || phone || '—';
+      if (avatar) {
+        if (shopInfo.photo_url) {
+          avatar.innerHTML = '<img src="' + esc(shopInfo.photo_url) + '" style="width:100%;height:100%;object-fit:cover">';
+          avatar.style.background = 'transparent';
+        } else {
+          avatar.textContent = getShopAvatar(shopInfo.shop_name || 'Магазин');
+        }
       }
     }
-    
-    // Fetch shop publications using shops-pub endpoint
-    const pubsResp = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(phone) + '&limit=50');
+
+    // Fetch shop publications
+    const pubsResp = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(phone) + '&limit=50&status=active');
     if (!pubsResp.ok) throw new Error('Failed to fetch publications');
     const pubs = await pubsResp.json();
     const total = Number(pubs.total || 0);
-    
-    if (countEl) countEl.textContent = total + ' публикаций';
+    if (countEl) countEl.textContent = total;
     
     if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
       listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Нет публикаций</h3><p>У этого магазина пока нет публикаций.</p></div>';
       return;
     }
     
-    // Render publications using pCard function
-    listEl.innerHTML = '<div class="pgrid" id="shop-view-grid">' + pubs.data.map(p => pCard(p)).join('') + '</div>';
+    listEl.innerHTML = '<div class="pgrid">' + pubs.data.map(p => pCard(p)).join('') + '</div>';
     
   } catch (err) {
     console.error('Shop view error:', err);
     if (nameEl) nameEl.textContent = 'Ошибка';
-    if (subEl) subEl.textContent = 'Не удалось загрузить информацию о магазине';
     if (listEl) listEl.innerHTML = '<div class="empty"><span>❌</span><h3>Ошибка загрузки</h3><p>' + esc(err.message) + '</p></div>';
   }
 }
@@ -248,18 +235,20 @@ async function renderShopProfile() {
   // Set basic info from session
   if (avatar) avatar.textContent = getShopAvatar(shop.name || shop.phone);
   if (nameEl) nameEl.textContent = shop.name || shop.phone;
-  if (phoneEl) phoneEl.textContent = 'Телефон: ' + shop.phone;
-  if (subEl) subEl.textContent = 'Здесь вы видите свои публикации и можете удалить старые объявления.';
+  if (phoneEl) phoneEl.textContent = shop.phone || '—';
+  if (subEl) subEl.textContent = 'Управляйте публикациями и настройками магазина';
   const welcomeEl = document.getElementById('shop-profile-page-welcome');
-  if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать в ' + (shop.name || 'магазин');
-  if (countEl) countEl.textContent = 'Загрузка…';
+  if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
+  if (countEl) countEl.textContent = '…';
   if (listEl) listEl.innerHTML = '<div class="loader">Загружаем публикации…</div>';
 
   try {
     // Try to get shop info from API
     const resp = await shopFetch('GET', '/shops/me');
     if (nameEl) nameEl.textContent = resp.shop_name || shop.name;
-    if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать в ' + (resp.shop_name || shop.name || 'магазин');
+    if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
+    if (subEl) subEl.textContent = 'Управляйте публикациями и настройками';
+    if (phoneEl) phoneEl.textContent = resp.phone || shop.phone || '—';
     
     // Display photo if available
     if (avatar) {
@@ -284,11 +273,11 @@ async function renderShopProfile() {
     const pubs = await shopFetch('GET', '/shops/products?limit=50');
     const total = Number(pubs.total || 0);
     console.log('[renderShopProfile] Publications received:', pubs);
-    if (countEl) countEl.textContent = total + ' публикаций';
+    if (countEl) countEl.textContent = total;
     
     if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
       console.log('[renderShopProfile] No publications found');
-      listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление и оно появится здесь после проверки.</p></div>';
+      listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление — оно появится здесь после проверки.</p></div>';
       return;
     }
     console.log('[renderShopProfile] Rendering', pubs.data.length, 'publications');
@@ -300,7 +289,7 @@ async function renderShopProfile() {
     try {
       const pubs = await shopFetch('GET', '/shops/products?limit=50');
       const total = Number(pubs.total || 0);
-      if (countEl) countEl.textContent = total + ' публикаций';
+      if (countEl) countEl.textContent = total;
       if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
         listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление и оно появится здесь после проверки.</p></div>';
         return;
@@ -313,33 +302,36 @@ async function renderShopProfile() {
 }
 
 function shopPubCard(p) {
-  const status = esc(p.status || 'active');
+  const statusKey = p.status || 'pending';
+  const STATUS_LABEL = { active: 'Активно', pending: 'На проверке', hidden: 'Скрыто' };
+  const statusLabel = STATUS_LABEL[statusKey] || statusKey;
   const date = p.created_at ? new Date(p.created_at).toLocaleDateString('ru-RU') : '—';
-  const price = fmtPrice(priceWithCommission(p));
+  const CAT_LABEL = { bouquet: '💐 Букет', basket: '🧺 Корзина', bear: '🧸 Игрушка', sweets: '🍰 Сладости' };
+  const catLabel = CAT_LABEL[p.category] || esc(p.category);
+  const buyerPrice = fmtPrice(priceWithCommission(p));
+  const sellerPrice = fmtPrice(Number(p.price));
   const photos = Array.isArray(p.photos) ? p.photos : [];
   const thumbHtml = photos[0]
-    ? '<div class="shop-pub-thumb"><img src="' + esc(imgUrl(photos[0], 400)) + '" alt="' + esc(p.title) + '" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;border-radius:16px"></div>'
-    : '<div class="shop-pub-thumb" style="width:100%;height:120px;border-radius:16px;background:#f5f5f5;display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:.95rem">Нет фото</div>';
-  const stock = p.stock ? Number(p.stock) : null;
-  const stockText = stock !== null ? (stock > 0 ? `${stock} в наличии` : 'нет в наличии') : '';
-  const stockClass = stock === 0 ? 'color:var(--red)' : 'color:var(--green)';
+    ? '<div class="shop-pub-thumb"><img src="' + esc(imgUrl(photos[0], 400)) + '" alt="' + esc(p.title) + '" loading="lazy" decoding="async"></div>'
+    : '<div class="shop-pub-thumb" style="display:flex;align-items:center;justify-content:center;font-size:2.5rem;background:#f0faf5">🌸</div>';
+  const desc = (p.description || '').substring(0, 100);
   const pAttr = encodeURIComponent(JSON.stringify(p));
-  
+
   return (
     '<div class="shop-pub-card">' +
       thumbHtml +
       '<div class="shop-pub-main">' +
         '<div class="shop-pub-top">' +
           '<div class="shop-pub-name">' + esc(p.title) + '</div>' +
-          '<span class="shop-card-status">' + esc(status) + '</span>' +
+          '<span class="shop-card-status ' + esc(statusKey) + '">' + esc(statusLabel) + '</span>' +
         '</div>' +
-        '<div class="shop-pub-meta">' + esc(p.category) + ' · ' + price + ' · ' + esc(p.city) + ' · ' + esc(date) + '</div>' +
-        (stockText ? '<div class="shop-pub-meta" style="' + stockClass + ';font-weight:600">' + esc(stockText) + '</div>' : '') +
-        '<div class="shop-pub-meta">' + esc((p.description || '').substring(0, 120)) + '...</div>' +
+        '<div class="shop-pub-meta">' + catLabel + (p.city ? ' &middot; 📍 ' + esc(p.city) : '') + ' &middot; ' + esc(date) + '</div>' +
+        (desc ? '<div class="shop-pub-meta">' + esc(desc) + (p.description && p.description.length > 100 ? '…' : '') + '</div>' : '') +
+        '<div class="shop-pub-price">' + buyerPrice + ' <span style="font-size:.75rem;font-weight:600;color:var(--gray)">(вам: ' + sellerPrice + ')</span></div>' +
       '</div>' +
       '<div class="shop-pub-actions">' +
-        '<button class="shop-pub-btn cart" onclick="event.stopPropagation();_pCardAddToCart(\'shop-' + esc(p.id) + '\',\'' + pAttr + '\')">🛒 Добавить в корзину</button>' +
-        '<button class="shop-pub-btn delete" onclick="deleteShopProduct(\'' + esc(p.id) + '\')">Удалить</button>' +
+        '<button class="shop-pub-btn edit" onclick="openEditPubModal(\'' + esc(p.id) + '\')">✏️ Изменить</button>' +
+        '<button class="shop-pub-btn delete" onclick="deleteShopProduct(\'' + esc(p.id) + '\')">🗑 Удалить</button>' +
       '</div>' +
     '</div>'
   );
@@ -465,6 +457,21 @@ async function renderShopAdminOrders() {
           <button class="btn btn-primary" style="flex:1;padding:8px;font-size:.8rem" onclick="shopConfirmOrder('${o.id}')">✅ Принять</button>
           <button class="btn btn-outline" style="flex:1;padding:8px;font-size:.8rem" onclick="shopRejectOrder('${o.id}')">❌ Отклонить</button>
         </div>` : ''}
+
+        ${o.chat_active ? `
+          <div style="margin-top:12px">
+            <button class="btn btn-outline" style="width:100%;padding:9px;font-size:.85rem;border-radius:12px" onclick="toggleShopChat('${o.id}')">
+              💬 <span id="chat-toggle-label-${o.id}">Открыть чат с клиентом</span>
+            </button>
+            <div id="chat-panel-${o.id}" class="chat-panel" style="display:none;margin-top:10px">
+              <div class="chat-msgs" id="chat-msgs-${o.id}"><div style="text-align:center;color:var(--gray);font-size:.82rem;padding:18px">Загружаем…</div></div>
+              <form class="chat-input-bar" onsubmit="event.preventDefault(); sendShopChat('${o.id}');">
+                <input id="chat-input-${o.id}" type="text" placeholder="Напишите клиенту…" maxlength="2000" autocomplete="off">
+                <button type="submit">Отправить</button>
+              </form>
+            </div>
+          </div>
+        ` : ''}
       </div>`;
     }).join('');
   } catch (e) {
@@ -509,6 +516,83 @@ window.shopRejectOrder = async (id) => {
   } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
 };
 
+// ─── Seller chat with customer (relay through bots) ─────────
+window.toggleShopChat = async function(orderId) {
+  const panel = document.getElementById('chat-panel-' + orderId);
+  const label = document.getElementById('chat-toggle-label-' + orderId);
+  if (!panel) return;
+  if (panel.style.display === 'none') {
+    panel.style.display = 'flex';
+    panel.style.flexDirection = 'column';
+    if (label) label.textContent = 'Скрыть чат';
+    await loadShopChat(orderId);
+    // poll every 4s while open
+    panel._poll = setInterval(() => loadShopChat(orderId, true), 4000);
+  } else {
+    panel.style.display = 'none';
+    if (label) label.textContent = 'Открыть чат с клиентом';
+    if (panel._poll) { clearInterval(panel._poll); panel._poll = null; }
+  }
+};
+
+async function loadShopChat(orderId, silent) {
+  const list = document.getElementById('chat-msgs-' + orderId);
+  if (!list) return;
+  try {
+    const token = localStorage.getItem('shop_admin_token');
+    const r = await fetch('/api/shops/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    const msgs = d.data || [];
+    if (!msgs.length) {
+      list.innerHTML = '<div style="text-align:center;color:var(--gray);font-size:.82rem;padding:18px">Сообщений пока нет.<br>Напишите клиенту первым.</div>';
+      return;
+    }
+    const escHtml = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const fmtTime = ts => {
+      try { const d = new Date(ts); return d.toLocaleTimeString('ru', { hour:'2-digit', minute:'2-digit' }); } catch { return ''; }
+    };
+    list.innerHTML = msgs.map(m => {
+      const role = m.sender; // 'customer' | 'shop' | 'system' | 'admin'
+      const cls = role === 'shop' ? 'shop' : (role === 'system' || role === 'admin') ? 'system' : 'customer';
+      if (cls === 'system') return `<div class="chat-msg system">${escHtml(m.text || '')}</div>`;
+      return `<div class="chat-msg ${cls}">${escHtml(m.text || (m.photo_url ? '📷 фото' : ''))}<div class="meta">${fmtTime(m.created_at)}${m.delivered ? ' · ✓' : ''}</div></div>`;
+    }).join('');
+    // auto-scroll to bottom
+    list.scrollTop = list.scrollHeight;
+  } catch (e) {
+    if (!silent) list.innerHTML = '<div style="text-align:center;color:var(--red);font-size:.82rem;padding:18px">' + (e.message || 'Ошибка') + '</div>';
+  }
+}
+
+window.sendShopChat = async function(orderId) {
+  const input = document.getElementById('chat-input-' + orderId);
+  if (!input) return;
+  const text = (input.value || '').trim();
+  if (!text) return;
+  const btn = input.parentElement.querySelector('button');
+  if (btn) btn.disabled = true;
+  try {
+    const token = localStorage.getItem('shop_admin_token');
+    const r = await fetch('/api/shops/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    input.value = '';
+    await loadShopChat(orderId);
+  } catch (e) {
+    toast(e.message || 'Ошибка отправки', 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+    input.focus();
+  }
+};
+
 window.deleteShopProduct = async function(id) {
   if (!confirm('Удалить эту публикацию? Это действие нельзя отменить.')) return;
   try {
@@ -517,6 +601,111 @@ window.deleteShopProduct = async function(id) {
     await renderShopProfile();
   } catch (err) {
     toast(err.message,'err');
+  }
+};
+
+let _editPubCache = {};
+
+window.openEditPubModal = async function(id) {
+  let p = _editPubCache[id];
+  if (!p) {
+    try {
+      const pubs = await shopFetch('GET', '/shops/products?limit=50');
+      (pubs.data || []).forEach(x => { _editPubCache[x.id] = x; });
+      p = _editPubCache[id];
+    } catch (e) { toast('Ошибка загрузки публикации', 'err'); return; }
+  }
+  if (!p) { toast('Публикация не найдена', 'err'); return; }
+
+  let modal = document.getElementById('edit-pub-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'edit-pub-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,17,23,.5);z-index:9999;display:flex;align-items:flex-end;justify-content:center;padding:0;backdrop-filter:blur(4px)';
+    modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+  }
+
+  const CAT_OPTS = [
+    ['bouquet','💐 Букет'],['basket','🧺 Корзина'],['bear','🧸 Игрушка'],['sweets','🍰 Сладости']
+  ].map(([v,l]) => `<option value="${v}"${p.category===v?' selected':''}>${l}</option>`).join('');
+
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:24px 24px 0 0;padding:28px 24px 40px;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;position:relative">
+      <div style="width:40px;height:4px;background:var(--border);border-radius:4px;margin:0 auto 20px"></div>
+      <button onclick="document.getElementById('edit-pub-modal').remove()" style="position:absolute;top:22px;right:22px;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--gray);width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center">✕</button>
+      <h3 style="font-family:'Outfit',sans-serif;font-size:1.2rem;margin-bottom:4px">✏️ Редактировать публикацию</h3>
+      <p style="color:var(--gray);font-size:.82rem;margin-bottom:20px">Изменить можно всё, кроме цены</p>
+
+      <input type="hidden" id="epm-id" value="${esc(p.id)}">
+
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Категория</label>
+        <select id="epm-category" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;background:#fff">${CAT_OPTS}</select>
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Название</label>
+        <input type="text" id="epm-title" value="${esc(p.title)}" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Описание</label>
+        <textarea id="epm-description" rows="4" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;resize:vertical;box-sizing:border-box;line-height:1.5">${esc(p.description||'')}</textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:6px">
+          💰 Цена (TJS)
+          <span style="font-size:.72rem;background:rgba(239,68,68,.1);color:#dc2626;padding:2px 8px;border-radius:999px;font-weight:600">нельзя изменить</span>
+        </label>
+        <input type="number" value="${esc(String(p.price))}" disabled style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;background:#f8f9fa;color:var(--gray);cursor:not-allowed;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Размер</label>
+        <input type="text" id="epm-size" value="${esc(p.size||'')}" placeholder="Например: Средний, 45 см" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Адрес получения</label>
+        <input type="text" id="epm-address" value="${esc(p.address||'')}" placeholder="ул. Рудаки, 12" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+      </div>
+      <div class="form-group" style="margin-bottom:24px">
+        <label>Время получения</label>
+        <input type="text" id="epm-pickup_time" value="${esc(p.pickup_time||'')}" placeholder="с 10:00 до 18:00" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+      </div>
+
+      <button onclick="saveEditPub()" class="btn btn-primary" style="width:100%;padding:14px;border-radius:14px;font-size:.95rem" id="epm-save-btn">
+        💾 Сохранить изменения
+      </button>
+      <div id="epm-msg" style="margin-top:10px;font-size:.83rem;text-align:center;min-height:18px"></div>
+    </div>`;
+};
+
+window.saveEditPub = async function() {
+  const id          = document.getElementById('epm-id')?.value;
+  const title       = document.getElementById('epm-title')?.value.trim();
+  const description = document.getElementById('epm-description')?.value.trim();
+  const category    = document.getElementById('epm-category')?.value;
+  const size        = document.getElementById('epm-size')?.value.trim();
+  const address     = document.getElementById('epm-address')?.value.trim();
+  const pickup_time = document.getElementById('epm-pickup_time')?.value.trim();
+  const btn         = document.getElementById('epm-save-btn');
+  const msgEl       = document.getElementById('epm-msg');
+
+  if (!title) { msgEl.style.color='var(--red)'; msgEl.textContent='Заполните название'; return; }
+
+  btn.disabled = true; btn.textContent = 'Сохраняем…';
+  msgEl.textContent = '';
+  try {
+    await shopFetch('PATCH', '/shops/products/' + encodeURIComponent(id), {
+      title, description, category, size, address, pickup_time
+    });
+    _editPubCache = {};
+    toast('✅ Публикация обновлена', 'ok');
+    document.getElementById('edit-pub-modal')?.remove();
+    await renderShopProfile();
+  } catch (e) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = '❌ ' + (e.message || 'Ошибка');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Сохранить изменения'; }
   }
 };
 
@@ -604,7 +793,6 @@ function pCard(p) {
         '</div>' +
         '<span class="pbadge">' + esc(CAT_LABEL[p.category]||p.category) + '</span>' +
         typeBadgeHtml +
-        timerBadge(p) +
       '</div>';
 
   } else if (photos.length === 1) {
@@ -615,7 +803,6 @@ function pCard(p) {
         '</div>' +
         '<span class="pbadge">' + esc(CAT_LABEL[p.category]||p.category) + '</span>' +
         typeBadgeHtml +
-        timerBadge(p) +
       '</div>';
 
   } else {
@@ -634,7 +821,6 @@ function pCard(p) {
         '</div>' +
         '<span class="pbadge">' + esc(CAT_LABEL[p.category]||p.category) + '</span>' +
         typeBadgeHtml +
-        timerBadge(p) +
         '<div class="img-dots">' + dots + '</div>' +
       '</div>';
   }
@@ -804,7 +990,6 @@ function renderDetail(p, el) {
           '<span class="pd-chip rose">' + esc(CAT_LABEL[p.category]||p.category) + '</span>' +
           '<span class="pd-chip">📍 ' + esc(p.city) + '</span>' +
           '<span class="pd-chip">👁 ' + (p.view_count||0) + ' просмотров</span>' +
-          expiryChip(p) +
         '</div>' +
         '<h2>' + esc(p.title) + '</h2>' +
         '<div class="pd-price">' + fmtPrice(price) + '</div>' +
@@ -821,7 +1006,9 @@ function renderDetail(p, el) {
             '</a>'
         ) +
         '<div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">' +
-          '<a class="btn btn-tg" href="' + esc(_cfg.telegram) + '" target="_blank" style="flex:1;min-width:140px;border-radius:14px;padding:13px 18px">✈️ Telegram</a>' +
+          (shopCard
+            ? '<a class="btn btn-tg" href="' + esc(_cfg.telegram) + '" target="_blank" style="flex:1;min-width:140px;border-radius:14px;padding:13px 18px">✈️ Telegram</a>'
+            : '') +
           '<a class="btn btn-ig" href="' + esc(_cfg.instagram) + '" target="_blank" style="flex:1;min-width:140px;border-radius:14px;padding:13px 18px">📸 Instagram</a>' +
         '</div>' +
       '</div>' +
@@ -1075,12 +1262,13 @@ function renderSellPhotos() {
     return '<div class="photo-thumb"><img src="' + url + '"><button class="photo-del" onclick="removePhoto(' + i + ')">x</button></div>';
   }).join('');
   if (hint) {
+    const minNeeded = getShopSession().phone ? 1 : 3;
     if (sellFiles.length === 0) {
-      hint.textContent = 'Минимум 3 фото';
+      hint.textContent = 'Минимум ' + minNeeded + ' фото';
       hint.style.color = 'var(--gray)';
       hint.style.fontWeight = '';
-    } else if (sellFiles.length < 3) {
-      hint.textContent = 'Загружено ' + sellFiles.length + ' из 3 — нужно ещё ' + (3 - sellFiles.length);
+    } else if (sellFiles.length < minNeeded) {
+      hint.textContent = 'Загружено ' + sellFiles.length + ' из ' + minNeeded + ' — нужно ещё ' + (minNeeded - sellFiles.length);
       hint.style.color = '#e67e22';
       hint.style.fontWeight = '700';
     } else {
@@ -1157,8 +1345,13 @@ window.updatePricePreview = () => {
   if (!val || val <= 0) { if(preview) preview.style.display = 'none'; return; }
   const rate = getCommission(cat);
   const total = Math.ceil((val * (1 + rate)).toFixed(2) / 10) * 10;
-  document.getElementById('price-seller').textContent = fmtPrice(val);
-  document.getElementById('price-total').textContent  = fmtPrice(total);
+  const commission = total - val;
+  const sellerEl = document.getElementById('price-seller');
+  const totalEl  = document.getElementById('price-total');
+  const commEl   = document.getElementById('price-commission');
+  if (sellerEl) sellerEl.textContent = fmtPrice(val);
+  if (totalEl)  totalEl.textContent  = fmtPrice(total);
+  if (commEl)   commEl.textContent   = fmtPrice(commission) + ' (' + Math.round(rate * 100) + '%)';
   if(preview) preview.style.display = 'block';
 };
 
@@ -1197,11 +1390,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const catVal = document.getElementById('sell-cat-val')?.value;
   if (catVal) updateSizeField(catVal);
 
-  // Hide market price field if logged in as shop
+  // Simplify form for shop users: hide everything except title/category/photos/description/price
   const shop = getShopSession();
   if (shop.phone) {
-    const marketPriceField = document.getElementById('market-price-field');
-    if (marketPriceField) marketPriceField.style.display = 'none';
+    document.querySelectorAll('#page-sell [data-shop-hide]').forEach(el => {
+      el.style.display = 'none';
+    });
+    // Hide the whole "personal contacts" box - everything inside it is shop-hidden anyway
+    const box = document.getElementById('sell-contact-box');
+    if (box) box.style.display = 'none';
   }
 });
 
@@ -1243,24 +1440,32 @@ window.submitListing = async () => {
   }
 
   const address = document.getElementById('sell-address').value.trim();
-  markField('sell-address', !!address);
+  const isShopUser = !!shop.phone;
+  if (!isShopUser) markField('sell-address', !!address);
 
-  if (!title||!price||!city||!phone||!category||!address) {
+  // Shops: only title/category/price/photos required (city/address/size auto-filled server-side)
+  const requiredOk = isShopUser
+    ? (title && price && category)
+    : (title && price && city && phone && category && address);
+  if (!requiredOk) {
     toast('Заполните все обязательные поля!','err');
-    scrollToFirst(['sell-title','sell-price','sell-city','sell-phone','sell-address']);
+    scrollToFirst(isShopUser
+      ? ['sell-title','sell-price']
+      : ['sell-title','sell-price','sell-city','sell-phone','sell-address']);
     return;
   }
-  if (needsSize && !size) {
+  if (!isShopUser && needsSize && !size) {
     toast(category === 'bear' ? 'Введите размер мишки!' : 'Выберите размер!','err');
     return;
   }
-  if (!giftWhen) {
+  if (!isShopUser && !giftWhen) {
     toast('Укажите когда получили!','err');
     return;
   }
-  if (sellFiles.length < 3) {
+  const minPhotos = isShopUser ? 1 : 3;
+  if (sellFiles.length < minPhotos) {
     document.getElementById('photo-hint')?.scrollIntoView({ behavior:'smooth', block:'center' });
-    toast('Загрузите минимум 3 фотографии!','err');
+    toast(isShopUser ? 'Загрузите минимум 1 фотографию!' : 'Загрузите минимум 3 фотографии!','err');
     return;
   }
 

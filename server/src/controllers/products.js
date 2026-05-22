@@ -75,7 +75,7 @@ async function uniqueSlug(base) {
 }
 
 function normalizePhone(phone) {
-  return (phone || '').toString().trim();
+  return (phone || '').toString().replace(/[^\d]/g, '');
 }
 
 async function collectActiveShopPhones() {
@@ -100,14 +100,12 @@ function publicProduct(p, shopPhones = []) {
   const { seller_telegram, seller_chat_id, ...pub } = p;
   // Source of truth: is seller_phone registered in shops table?
   const normalizedPhone = normalizePhone(p.seller_phone);
-  const isShop = shopPhones.length > 0 && shopPhones.includes(normalizedPhone);
-  
-  console.log('[publicProduct v2]', p.title, '| phone:', normalizedPhone, '| shopPhones contains?', isShop, '| → result:', isShop ? 'SHOP' : 'ECO');
-  
+  const isShop = p.listing_type === 'shop' || (shopPhones.length > 0 && shopPhones.includes(normalizedPhone));
+
   const result = {
     ...pub,
     seller_phone: isShop ? (p.seller_phone || null) : null,
-    photo_url: isShop ? (p.photo_url || null) : null,
+    photo_url: p.photo_url || null,
     shop_name: isShop ? (p.shop_name || p.seller_name || 'Магазин') : null,
     status: p.status || 'unknown',
     listing_type: isShop ? 'shop' : 'eco',
@@ -154,20 +152,16 @@ exports.getProducts = async (req, res) => {
     if (max_price) query = query.lte('price', Number(max_price));
     if (search)    query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%`);
 
+    // Filter by listing_type. Treat NULL as 'eco' for backwards-compat so old
+    // rows without listing_type still appear in the eco catalog.
     if (listing_type === 'shop') {
-      if (shopPhones.length === 0) {
-        return res.json({ data: [], total: 0, page: Number(page), limit: lim, total_pages: 0 });
-      }
-      query = query.in('seller_phone', shopPhones);
+      query = query.eq('listing_type', 'shop');
     } else if (listing_type === 'eco') {
-      if (shopPhones.length > 0) {
-        const inList = '(' + shopPhones.map(p => `"${p.replace(/"/g, '\\"')}"`).join(',') + ')';
-        query = query.not('seller_phone', 'in', inList);
-      }
+      query = query.or('listing_type.eq.eco,listing_type.is.null');
     }
 
     if (shop_phone) {
-      query = query.eq('seller_phone', normalizePhone(shop_phone));
+      query = query.eq('seller_phone', shop_phone);
     }
 
     const { data, error, count } = await query
@@ -233,7 +227,7 @@ exports.getShopPublications = async (req, res) => {
     const explicitShopPhone = req.query.shop_phone;
 
     if (explicitShopPhone) {
-      const shopPhone = normalizePhone(explicitShopPhone);
+      const shopPhone = explicitShopPhone;
       const { data, error, count } = await getClient()
         .from('products')
         .select('*', { count: 'exact' })
@@ -248,15 +242,16 @@ exports.getShopPublications = async (req, res) => {
         .select('phone, shop_name, photo_url')
         .eq('phone', shopPhone);
       if (!shopsError && Array.isArray(shops)) {
-        shops.forEach(s => { shopsMap[s.phone] = s; });
+        shops.forEach(s => { shopsMap[normalizePhone(s.phone)] = s; });
       }
 
+      const normalizedShopPhone = normalizePhone(shopPhone);
       const publicProducts = (data || []).map(d => publicProduct({
         ...d,
         listing_type: 'shop',
-        shop_name: shopsMap[shopPhone]?.shop_name || d.shop_name || d.seller_name,
-        photo_url: shopsMap[shopPhone]?.photo_url || d.photo_url
-      }, [shopPhone]));
+        shop_name: shopsMap[normalizedShopPhone]?.shop_name || d.shop_name || d.seller_name,
+        photo_url: shopsMap[normalizedShopPhone]?.photo_url || d.photo_url
+      }, [normalizedShopPhone]));
       return res.json({
         data: publicProducts,
         total: count || 0,
@@ -375,23 +370,57 @@ exports.getCities = async (req, res) => {
 // ─────────────────────────────
 exports.createProduct = async (req, res) => {
   try {
-    const {
+    let {
       title, description, category, price, city,
       seller_name, seller_phone, seller_telegram,
       address, pickup_time, gift_when, market_price, size,
       seller_chat_id
     } = req.body;
 
-    if (!title || !category || !price || !city || !seller_phone) {
+    if (!title || !category || !price || !seller_phone) {
       return res.status(400).json({ error: 'Заполните все обязательные поля' });
     }
 
     const files = req.files || [];
-    if (files.length < 3) {
-      return res.status(400).json({ error: 'Загрузите минимум 3 фотографии' });
+
+    // Determine pricing mode and listing_type based on whether the seller is
+    // a registered active shop. Source of truth: presence in `shops` table.
+    let pricing_mode = null;
+    let listing_type = 'eco';
+    try {
+      const { data: shopRow } = await getClient()
+        .from('shops')
+        .select('phone, status, shop_name, city, address, telegram')
+        .eq('phone', normalizePhone(seller_phone))
+        .maybeSingle();
+      if (shopRow && shopRow.status === 'active') {
+        pricing_mode = 'inclusive';
+        listing_type = 'shop';
+        // Auto-fill missing fields from shop profile so shops don't have to
+        // re-enter city/address/name on every publication.
+        if (!city)            city            = shopRow.city || null;
+        if (!address)         address         = shopRow.address || null;
+        if (!seller_name)     seller_name     = shopRow.shop_name || null;
+        if (!seller_telegram) seller_telegram = shopRow.telegram || null;
+      }
+    } catch (_) { /* if shops query fails, fall back to eco/legacy */ }
+
+    // City still required for non-shop listings
+    if (listing_type !== 'shop' && !city) {
+      return res.status(400).json({ error: 'Укажите город' });
     }
 
-    const slug = await uniqueSlug(toSlug(title));
+    // Photo requirement: shops need 1+, eco listings need 3+
+    const minPhotos = listing_type === 'shop' ? 1 : 3;
+    if (files.length < minPhotos) {
+      return res.status(400).json({
+        error: listing_type === 'shop'
+          ? 'Загрузите минимум 1 фотографию'
+          : 'Загрузите минимум 3 фотографии'
+      });
+    }
+
+    const slug = await uniqueSlug(toSlug(title)).catch(() => `product-${Date.now()}`);
 
     // Сначала создаём объявление с пустыми фото — отвечаем клиенту быстро
     const { data, error } = await getClient()
@@ -411,6 +440,8 @@ exports.createProduct = async (req, res) => {
         market_price:    market_price    ? Number(market_price) : null,
         size:            size            || null,
         seller_chat_id:  seller_chat_id  || null,
+        pricing_mode,
+        listing_type,
         photos: [],
         slug,
         status: 'pending'

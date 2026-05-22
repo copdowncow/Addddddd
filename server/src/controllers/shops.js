@@ -3,13 +3,22 @@ const bcrypt    = require('bcryptjs');
 const jwt       = require('jsonwebtoken');
 const sharp     = require('sharp');
 const { getClient, uploadPhoto } = require('../db/supabase');
-const { notifyShopRegistration } = require('../services/telegram');
+const { notifyShopRegistration, notifyProductEdited } = require('../services/telegram');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'rebuket_secret_key';
 
+function normalizePhone(phone) {
+  return (phone || '').toString().replace(/[^\d]/g, '');
+}
+
+function phoneFilter(phone) {
+  const normalized = normalizePhone(phone);
+  return `phone.eq.${normalized},phone.ilike.%${normalized}%`;
+}
+
 exports.getByPhone = async (req, res) => {
   try {
-    const { phone } = req.query;
+    const phone = normalizePhone(req.query.phone);
     if (!phone) {
       return res.status(400).json({ error: 'Phone is required' });
     }
@@ -18,7 +27,7 @@ exports.getByPhone = async (req, res) => {
     const { data, error } = await db
       .from('shops')
       .select('phone, shop_name, city, photo_url, description, status')
-      .eq('phone', phone)
+      .or(phoneFilter(phone))
       .single();
 
     if (error) throw error;
@@ -35,7 +44,8 @@ exports.getByPhone = async (req, res) => {
 
 exports.register = async (req, res) => {
   try {
-    const { phone, password, shop_name, city, telegram } = req.body;
+    let { phone, password, shop_name, city, telegram, address } = req.body;
+    phone = normalizePhone(phone);
 
     if (!phone || !password) {
       return res.status(400).json({ error: 'Телефон и пароль обязательны' });
@@ -49,8 +59,8 @@ exports.register = async (req, res) => {
     const { data: existing } = await db
       .from('shops')
       .select('id')
-      .eq('phone', phone)
-      .single();
+      .or(phoneFilter(phone))
+      .maybeSingle();
     
 
     if (existing) {
@@ -67,6 +77,7 @@ exports.register = async (req, res) => {
         shop_name: shop_name || null,
         city:      city      || null,
         telegram:  telegram  || null,
+        address:   address   || null,
         status:    'pending',
         photo_url: null,
       })
@@ -89,7 +100,8 @@ exports.register = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    let { phone, password } = req.body;
+    phone = normalizePhone(phone);
 
     if (!phone || !password) {
       return res.status(400).json({ error: 'Введите телефон и пароль' });
@@ -100,7 +112,7 @@ exports.login = async (req, res) => {
     const { data: shop, error } = await db
       .from('shops')
       .select('*')
-      .eq('phone', phone)
+      .or(phoneFilter(phone))
       .single();
 
     if (error || !shop) {
@@ -139,7 +151,8 @@ exports.login = async (req, res) => {
 
 exports.adminLogin = async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    let { phone, password } = req.body;
+    phone = normalizePhone(phone);
     if (!phone || !password) {
       return res.status(400).json({ error: 'Требуется телефон и пароль' });
     }
@@ -147,7 +160,7 @@ exports.adminLogin = async (req, res) => {
     const { data: shop, error } = await getClient()
       .from('shops')
       .select('id,shop_name,city,telegram,phone,status,photo_url')
-      .eq('phone', phone)
+      .or(phoneFilter(phone))
       .eq('admin_password', password)
       .single();
 
@@ -179,11 +192,11 @@ exports.adminLogin = async (req, res) => {
 
 exports.me = async (req, res) => {
   try {
-    const { phone } = req.shop;
+    const phone = normalizePhone(req.shop?.phone);
     const { data: shop, error } = await getClient()
       .from('shops')
-      .select('id,shop_name,city,telegram,phone,status,photo_url,description')
-      .eq('phone', phone)
+      .select('id,shop_name,city,telegram,phone,status,photo_url,description,delivery_info,categories,verified,rating,rating_count,cover_url')
+      .or(phoneFilter(phone))
       .single();
 
     if (error || !shop) {
@@ -192,13 +205,19 @@ exports.me = async (req, res) => {
 
     res.json({
       ok: true,
-      shop_name: shop.shop_name || shop.phone,
-      phone: shop.phone,
-      city: shop.city,
-      telegram: shop.telegram,
-      status: shop.status,
-      photo_url: shop.photo_url,
-      description: shop.description || '',
+      shop_name:     shop.shop_name || shop.phone,
+      phone:         shop.phone,
+      city:          shop.city,
+      telegram:      shop.telegram,
+      status:        shop.status,
+      photo_url:     shop.photo_url,
+      cover_url:     shop.cover_url || null,
+      description:   shop.description || '',
+      delivery_info: shop.delivery_info || '',
+      categories:    shop.categories || [],
+      verified:      !!shop.verified,
+      rating:        shop.rating ?? null,
+      rating_count:  shop.rating_count ?? 0,
     });
   } catch (e) {
     console.error('shops.me error:', e.message);
@@ -224,28 +243,42 @@ async function processImage(file) {
 exports.updateProfile = async (req, res) => {
   try {
     const { phone } = req.shop;
-    const { shop_name, description } = req.body;
+    const {
+      shop_name, description, city, telegram,
+      new_phone, delivery_info, categories,
+    } = req.body;
     const photoFile = req.file;
 
-    console.log('[updateProfile] phone:', phone, 'shop_name:', shop_name, 'has photo:', !!photoFile, 'description length:', (description || '').length);
-
     const updates = {};
-    if (shop_name) updates.shop_name = shop_name;
-    if (description !== undefined) updates.description = description || null;
+    if (shop_name !== undefined)     updates.shop_name = shop_name || null;
+    if (description !== undefined)   updates.description = description || null;
+    if (city !== undefined)          updates.city = city || null;
+    if (telegram !== undefined)      updates.telegram = telegram || null;
+    if (delivery_info !== undefined) updates.delivery_info = delivery_info || null;
+    if (categories !== undefined) {
+      let cats = categories;
+      if (typeof cats === 'string') { try { cats = JSON.parse(cats); } catch (_) { cats = cats.split(',').map(s => s.trim()).filter(Boolean); } }
+      updates.categories = Array.isArray(cats) ? cats.slice(0, 20) : null;
+    }
+
+    // Phone change: requires unique new_phone
+    if (new_phone && new_phone.trim() && normalizePhone(new_phone) !== phone) {
+      const np = normalizePhone(new_phone);
+      const { data: dup } = await getClient().from('shops').select('id').or(phoneFilter(np)).maybeSingle();
+      if (dup) return res.status(409).json({ error: 'Магазин с таким телефоном уже существует' });
+      updates.phone = np;
+    }
 
     if (photoFile) {
-      console.log('[updateProfile] Processing photo...');
       const processed = await processImage(photoFile);
       const photo_url = await uploadPhoto(processed, `shop-${phone}-${Date.now()}.jpg`, 'image/jpeg');
       updates.photo_url = photo_url;
-      console.log('[updateProfile] Photo uploaded:', photo_url);
     }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'Нет данных для обновления' });
     }
 
-    console.log('[updateProfile] Updating with:', updates);
     const { data, error } = await getClient()
       .from('shops')
       .update(updates)
@@ -255,16 +288,31 @@ exports.updateProfile = async (req, res) => {
 
     if (error) throw error;
 
-    console.log('[updateProfile] Updated shop:', data);
+    // Phone changed → issue new JWT
+    let token = null;
+    if (updates.phone) {
+      token = jwt.sign(
+        { shop_id: data.id, phone: data.phone, role: 'shop' },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+    }
+
     res.json({
       ok: true,
-      shop_name: data.shop_name,
-      phone: data.phone,
-      city: data.city,
-      telegram: data.telegram,
-      status: data.status,
-      photo_url: data.photo_url,
-      description: data.description || '',
+      token,
+      shop_name:     data.shop_name,
+      phone:         data.phone,
+      city:          data.city,
+      telegram:      data.telegram,
+      status:        data.status,
+      photo_url:     data.photo_url,
+      description:   data.description || '',
+      delivery_info: data.delivery_info || '',
+      categories:    data.categories || [],
+      verified:      !!data.verified,
+      rating:        data.rating ?? null,
+      rating_count:  data.rating_count ?? 0,
     });
   } catch (e) {
     console.error('shops.updateProfile error:', e.message);
@@ -277,14 +325,15 @@ exports.listProducts = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const lim = Math.min(Number(limit) || 20, 100);
     const off = (Number(page) - 1) * lim;
-    const { phone } = req.shop;
+    const phone = normalizePhone(req.shop?.phone);
 
     console.log('[listProducts] Fetching products for shop phone:', phone);
 
+    const phoneFilter = `seller_phone.eq.${phone},seller_phone.ilike.%${phone}%`;
     const { data, error, count } = await getClient()
       .from('products')
       .select('*', { count: 'exact' })
-      .eq('seller_phone', phone)
+      .or(phoneFilter)
       .order('created_at', { ascending: false })
       .range(off, off + lim - 1);
 
@@ -305,6 +354,59 @@ exports.listProducts = async (req, res) => {
   }
 };
 
+exports.updateProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { phone } = req.shop;
+
+    const { data: product, error: fetchErr } = await getClient()
+      .from('products')
+      .select('id,seller_phone,title,description,category,price,city,size,address,pickup_time,slug,listing_type,status,photos')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !product) {
+      return res.status(404).json({ error: 'Публикация не найдена' });
+    }
+    if (normalizePhone(product.seller_phone) !== normalizePhone(phone)) {
+      return res.status(403).json({ error: 'Нет доступа к этой публикации' });
+    }
+
+    const { title, description, category, size, address, pickup_time } = req.body;
+
+    const updates = {};
+    if (title       !== undefined && title.trim())       updates.title       = title.trim();
+    if (description !== undefined)                       updates.description = description || null;
+    if (category    !== undefined && category.trim())    updates.category    = category.trim();
+    if (size        !== undefined)                       updates.size        = size || null;
+    if (address     !== undefined)                       updates.address     = address || null;
+    if (pickup_time !== undefined)                       updates.pickup_time = pickup_time || null;
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Нет данных для обновления' });
+    }
+
+    const { data, error } = await getClient()
+      .from('products')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Notify admins about the shop edit
+    notifyProductEdited({ ...product, ...updates }, phone).catch(e =>
+      console.log('notifyProductEdited error:', e.message)
+    );
+
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('shops.updateProduct error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+};
+
 exports.deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
@@ -319,7 +421,7 @@ exports.deleteProduct = async (req, res) => {
     if (fetchErr || !product) {
       return res.status(404).json({ error: 'Публикация не найдена' });
     }
-    if (product.seller_phone !== phone) {
+    if (normalizePhone(product.seller_phone) !== normalizePhone(phone)) {
       return res.status(403).json({ error: 'Нет доступа к этой публикации' });
     }
 

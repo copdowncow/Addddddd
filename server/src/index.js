@@ -24,8 +24,11 @@ const { adminAuth, shopAuth, tryShopAuth } = require('./middleware/auth');
 const A    = require('./controllers/auth');
 const P    = require('./controllers/products');
 const I    = require('./controllers/inquiries');
-const S    = require('./controllers/shops');   
-const O    = require('./controllers/orders');   
+const S    = require('./controllers/shops');
+const O    = require('./controllers/orders');
+const C    = require('./controllers/chat');
+const E    = require('./controllers/admin_earnings');
+const AS   = require('./controllers/admin_shops');
 
 const app    = express();
 const PORT   = Number(process.env.PORT || 3000);
@@ -103,6 +106,27 @@ router.delete('/admin/products/:id',  adminAuth, P.adminDelete);
 router.get('/admin/inquiries',              adminAuth, I.getInquiries);
 router.patch('/admin/inquiries/:id/status', adminAuth, I.updateInquiry);
 router.get('/admin/stats',                  adminAuth, I.getStats);
+
+// ── Marketplace earnings + settings ──────────────────────
+router.get('/admin/earnings',     adminAuth, E.getEarnings);
+router.get('/admin/settings',     adminAuth, E.getSettings);
+router.patch('/admin/settings',   adminAuth, E.updateSettings);
+router.get('/platform-settings',             E.getPublicSettings);
+
+// ── Disputes ─────────────────────────────────────────────
+router.get('/admin/disputes',                       adminAuth, E.listDisputes);
+router.patch('/admin/orders/:id/dispute-resolve',   adminAuth, E.resolveDispute);
+
+// ── Shops administration ─────────────────────────────────
+router.get('/admin/shops',                          adminAuth, AS.listShops);
+router.patch('/admin/shops/:id',                    adminAuth, AS.updateShop);
+router.post('/admin/shops/:id/reset-password',      adminAuth, AS.resetShopPassword);
+router.delete('/admin/shops/:id',                   adminAuth, AS.banShop);
+
+// ── Order chat (relay messages) ──────────────────────────
+router.get('/shops/admin/orders/:id/messages',  shopAuth,  C.shopListMessages);
+router.post('/shops/admin/orders/:id/messages', shopAuth,  C.shopSendMessage);
+router.get('/admin/orders/:id/messages',        adminAuth, C.adminListMessages);
 
 // ── App ──────────────────────────────────────────────────
 app.set('trust proxy', 1);

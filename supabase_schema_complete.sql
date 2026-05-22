@@ -1,3 +1,7 @@
+-- ──────────────────────────────────────────────────────────────
+-- Main Schema - Complete database structure for Re.Buket
+-- This file includes all tables needed for the application
+-- ──────────────────────────────────────────────────────────────
 
 DROP TABLE IF EXISTS public.chat_sessions CASCADE;
 DROP TABLE IF EXISTS public.chat_messages CASCADE;
@@ -16,7 +20,7 @@ CREATE TABLE public.admins (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ── SHOPS TABLE (CRITICAL!) ──────────────────────────────────
+-- ── SHOPS TABLE ──────────────────────────────────────────────
 CREATE TABLE public.shops (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone TEXT UNIQUE NOT NULL,
@@ -132,7 +136,7 @@ CREATE TABLE public.inquiries (
 );
 
 -- ── PLATFORM SETTINGS TABLE ──────────────────────────────────
-CREATE TABLE public.platform_settings (
+CREATE TABLE IF NOT EXISTS public.platform_settings (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   default_commission_percent NUMERIC(5,2) NOT NULL DEFAULT 20.00,
   taxi_fixed_fee NUMERIC(10,2) NOT NULL DEFAULT 50.00,
