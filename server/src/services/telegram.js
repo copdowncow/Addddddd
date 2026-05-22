@@ -154,15 +154,10 @@ async function handleOrderCallback(callbackQuery) {
 📞 ${updatedOrder.customer_phone}
 💰 ${(Number(updatedOrder.total)||0).toLocaleString('ru')} сом.`, { parse_mode: 'HTML' });
 
-    // After payment confirmation, notify seller(s) and customer + activate relay chat
+    // After payment confirmation, activate chat (notifies client) and notify seller
     if (status === 'payment_confirmed') {
       try { await activateOrderChatFlow(updatedOrder); }
       catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
-      try {
-        await notifyCustomerPaymentConfirmed(updatedOrder);
-      } catch (e) {
-        console.error('[handleOrderCallback] Failed to notify customer (payment_confirmed):', e.message);
-      }
       try {
         await notifySellerAboutOrder(updatedOrder);
       } catch (e) {
