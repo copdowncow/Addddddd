@@ -1432,11 +1432,6 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <label>Ваш номер телефона *</label>
           <input type="tel" id="checkout-phone" placeholder="+992 900 000000">
         </div>
-        <div class="form-group">
-          <label>Ваш Telegram *</label>
-          <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem" required>
-          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Обязательно для получения уведомлений о статусе заказа</small>
-        </div>
         <div class="form-group checkout-address-group" id="customer-address-group">
           <label>Ваш адрес *</label>
           <input type="text" id="checkout-address" placeholder="ул. Рудаки, 12">
@@ -2179,15 +2174,14 @@ window.toggleAnotherPerson = () => {
 window.goToCheckoutStep2 = () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
-  const telegram = document.getElementById('checkout-telegram').value.trim();
   const anotherPerson = document.getElementById('checkout-another-person').checked;
   const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
   const receiverAddress = anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : null;
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !phone || !telegram) {
+  if (!name || !phone) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните имя, телефон и Telegram';
+    msgEl.textContent = 'Заполните имя и телефон';
     return;
   }
   
@@ -2380,7 +2374,6 @@ window.previewReceipt = (event) => {
 window.completeCheckout = async () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
-  const telegram = document.getElementById('checkout-telegram').value.trim();
   const anotherPerson = document.getElementById('checkout-another-person').checked;
   const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
   const receiverName = anotherPerson ? document.getElementById('checkout-receiver-name').value.trim() : null;
@@ -2392,9 +2385,9 @@ window.completeCheckout = async () => {
   const receiptFile = window.checkoutReceiptFile;
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !telegram || !delivery) {
+  if (!name || !delivery) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = !name ? 'Введите имя покупателя' : !telegram ? 'Введите Telegram' : 'Выберите способ доставки';
+    msgEl.textContent = !name ? 'Введите имя покупателя' : 'Выберите способ доставки';
     return;
   }
   
