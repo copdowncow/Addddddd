@@ -24,6 +24,9 @@ const customerPendingRefundReason = new Map();
 
 const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
 
+// In-memory map for username -> chat_id (for testing, should be moved to database)
+const usernameToChatId = new Map();
+
 function getMiniAppUrl() {
   const url = (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
   console.log('[getMiniAppUrl] MINI_APP_URL:', process.env.MINI_APP_URL);
@@ -436,8 +439,23 @@ function initUserBot() {
 
   userBot.onText(/\/help/, async (msg) => {
     await userBot.sendMessage(msg.chat.id,
-      `🌸 <b>ReBuket — помощь</b>\n\n/start   — запустить бота\n/catalog — каталог\n/sell    — разместить объявление\n/help    — эта справка`,
+      `🌸 <b>ReBuket — помощь</b>\n\n/start   — запустить бота\n/catalog — каталог\n/sell    — разместить объявление\n/help    — эта справка\n/register @username — зарегистрировать свой Telegram username`,
       { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
+    );
+  });
+
+  // /register @username - register username for notifications
+  userBot.onText(/\/register\s+(@?\w+)/, async (msg, match) => {
+    const username = match[1].replace('@', '').trim();
+    const chatId = msg.chat.id;
+    
+    // Save mapping
+    usernameToChatId.set(username.toLowerCase(), chatId);
+    console.log('[/register] Registered username:', username, '-> chat_id:', chatId);
+    
+    await userBot.sendMessage(msg.chat.id,
+      `✅ <b>Username зарегистрирован!</b>\n\nТеперь вы будете получать уведомления о заказах на этот аккаунт.\n\n📱 Username: @${username}`,
+      { parse_mode: 'HTML' }
     );
   });
 
@@ -1408,25 +1426,14 @@ async function notifyCustomerPaymentConfirmed(order) {
     }
   }
 
-  // Fallback 2: try to send message by username (only works if user has started the bot)
+  // Fallback 2: try to find chat_id by username from registered users
   if (!chatId && order.customer_telegram) {
-    console.log('[notifyCustomerPaymentConfirmed] Trying to send message by username:', order.customer_telegram);
-    // Remove @ if present
-    const username = order.customer_telegram.replace('@', '').trim();
-    try {
-      const total = (Number(order.total) || 0).toLocaleString('ru');
-      const text =
-        `✅ <b>Чек подтверждён</b>\n\n` +
-        `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
-        `Магазин получил уведомление и уже начинает сборку.\n\n` +
-        `💰 Сумма: ${total} сом`;
-      
-      await userBot.sendMessage(username, text, { parse_mode: 'HTML' });
-      console.log('[notifyCustomerPaymentConfirmed] SUCCESS - Message sent by username:', username);
-      return;
-    } catch (e) {
-      console.log('[notifyCustomerPaymentConfirmed] Could not send by username:', e.message);
-      console.log('[notifyCustomerPaymentConfirmed] User probably has not started the bot yet');
+    console.log('[notifyCustomerPaymentConfirmed] Trying to find chat_id by username:', order.customer_telegram);
+    const username = order.customer_telegram.replace('@', '').trim().toLowerCase();
+    chatId = usernameToChatId.get(username);
+    if (chatId) {
+      foundVia = 'username_map';
+      console.log('[notifyCustomerPaymentConfirmed] Found chat_id from username map:', chatId);
     }
   }
 
