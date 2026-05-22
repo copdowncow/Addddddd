@@ -386,7 +386,18 @@ function initUserBot() {
     const name   = msg.from?.first_name || 'друг';
     const appUrl = getMiniAppUrl();
     const param  = (match && match[1] || '').trim();
+    const username = msg.from?.username;
+    const chatId = msg.chat.id;
+    
     console.log('[bot /start] param:', JSON.stringify(param.substring(0, 50)));
+    console.log('[bot /start] username:', username, 'chat_id:', chatId);
+
+    // Auto-register username if available
+    if (username) {
+      const cleanUsername = username.replace('@', '').trim().toLowerCase();
+      usernameToChatId.set(cleanUsername, chatId);
+      console.log('[bot /start] Auto-registered username:', cleanUsername, '-> chat_id:', chatId);
+    }
 
     if (param === 'inquiry' || param.startsWith('inq_')) {
       const adminHandle = (process.env.ADMIN_TELEGRAM || 'https://t.me/Rebuket_admin')
@@ -419,8 +430,12 @@ function initUserBot() {
       return;
     }
 
+    const registrationStatus = username 
+      ? `✅ Ваш Telegram username <b>@${username}</b> зарегистрирован для уведомлений.\n\n` 
+      : `⚠️ У вас не установлен username в Telegram.\n\nДля получения уведомлений о заказах установите username в настройках Telegram и напишите /start снова.\n\n`;
+
     await userBot.sendMessage(msg.chat.id,
-      `🌸 <b>Привет, ${escHtml(name)}!</b>\n\nДобро пожаловать в <b>ReBuket</b> — маркетплейс букетов и сладостей в Таджикистане.\n\n💐 <b>Купить</b> — просматривать букеты, корзины, игрушки и сладости\n🛍 <b>Продать</b> — разместить своё объявление\n📩 <b>Связаться</b> — оставить заявку продавцу\n\n👇 Нажмите кнопку ниже чтобы открыть каталог:`,
+      `🌸 <b>Привет, ${escHtml(name)}!</b>\n\n${registrationStatus}Добро пожаловать в <b>ReBuket</b> — маркетплейс букетов и сладостей в Таджикистане.\n\n💐 <b>Купить</b> — просматривать букеты, корзины, игрушки и сладости\n🛍 <b>Продать</b> — разместить своё объявление\n📩 <b>Связаться</b> — оставить заявку продавцу\n\n👇 Нажмите кнопку ниже чтобы открыть каталог:`,
       { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
     );
   });
