@@ -317,6 +317,11 @@ async function notifySellerAboutOrder(order) {
       console.log('[notifySellerAboutOrder] Shop has no chat_id:', shop.phone, '— send /start to shopBot first');
       continue;
     }
+    // Don't send shop notification to the customer
+    if (shop.telegram_chat_id === order.customer_chat_id) {
+      console.log('[notifySellerAboutOrder] Skipping shop notification to customer:', shop.phone);
+      continue;
+    }
     try {
       await bot.sendMessage(shop.telegram_chat_id, message, {
         parse_mode: 'HTML',
