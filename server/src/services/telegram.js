@@ -403,6 +403,9 @@ function initUserBot() {
       const cleanUsername = username.replace('@', '').trim().toLowerCase();
       usernameToChatId.set(cleanUsername, chatId);
       console.log('[bot /start] Auto-registered username:', cleanUsername, '-> chat_id:', chatId);
+      console.log('[bot /start] Current username map size:', usernameToChatId.size);
+    } else {
+      console.log('[bot /start] No username available for auto-registration');
     }
 
     if (param === 'inquiry' || param.startsWith('inq_')) {
@@ -493,92 +496,12 @@ function initUserBot() {
     } catch (_) {}
   });
 
-  // /contact — enter chat with shop for active order
-  userBot.onText(/\/contact/, async (msg) => {
-    try {
-      const chatId = msg.chat.id;
-      
-      // Find active order for this customer
-      const { createSupabaseClient } = require('../db/supabase');
-      const db = createSupabaseClient();
-      
-      // Find order where customer has chat_id and chat is active
-      const { data: orders } = await db
-        .from('orders')
-        .select('*')
-        .eq('customer_chat_id', String(chatId))
-        .eq('chat_active', true)
-        .in('status', ['seller_accepted', 'in_progress', 'ready'])
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      if (!orders || orders.length === 0) {
-        await userBot.sendMessage(chatId, '❌ Нет активного заказа для чата с магазином.');
-        return;
-      }
-      
-      const order = orders[0];
-      
-      // Activate chat for customer
-      await Chat.setActiveChat(chatId, 'customer', order.id);
-      
-      // Get shop info
-      let items = [];
-      if (typeof order.items === 'string') {
-        try { items = JSON.parse(order.items); } catch (e) { items = []; }
-      } else if (Array.isArray(order.items)) {
-        items = order.items;
-      }
-      const sellerPhones = [...new Set(items.map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
-      
-      const { data: shops } = await db
-        .from('shops')
-        .select('phone, shop_name, telegram_chat_id')
-        .in('phone', sellerPhones);
-      
-      const shop = shops && shops[0];
-      
-      await userBot.sendMessage(chatId,
-        `✅ <b>Чат с магазином открыт</b>\n\n` +
-        `📦 Заказ #${order.id}\n` +
-        (shop ? `🏪 Магазин: ${shop.shop_name}\n` : '') +
-        `\nТеперь вы можете общаться с магазином напрямую.\n\n` +
-        `Для завершения чата напишите /endchat`,
-        { parse_mode: 'HTML' }
-      );
-    } catch (e) {
-      console.error('[/contact] Error:', e.message);
-      await userBot.sendMessage(msg.chat.id, '❌ Ошибка при открытии чата.');
-    }
-  });
-
   userBot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return;
     // Skip if customer is currently entering refund reason — that handler will pick it up
     if (customerPendingRefundReason.has(msg.chat.id)) return;
 
-    // ── Relay to shop if active chat session exists ─────────
-    try {
-      const sess = await Chat.getActiveChat(msg.chat.id);
-      if (sess && sess.role === 'customer' && sess.order_id) {
-        const order = await Chat.getOrderForChat(sess.order_id);
-        if (order && order.chat_active) {
-          const text = msg.text.trim().slice(0, 2000);
-          const saved = await Chat.persistMessage({
-            order_id: order.id, sender: 'customer', text, tg_message_id: msg.message_id
-          });
-          const delivered = await relayCustomerToShop(order, text);
-          if (saved) await Chat.markDelivered(saved.id);
-          await userBot.sendMessage(msg.chat.id,
-            delivered > 0 ? '✅ Сообщение передано магазину' : '⚠️ Магазин пока не подключился к боту. Сообщение сохранено.',
-            { reply_to_message_id: msg.message_id }
-          ).catch(_=>{});
-          return;
-        }
-      }
-    } catch (e) { console.log('[userBot relay]', e.message); }
-
-    // Fallback — open mini-app
+    // No chat functionality - just open mini-app
     await userBot.sendMessage(msg.chat.id, `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
       { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
     );
@@ -1166,7 +1089,7 @@ function initShopBot() {
     } catch (_) {}
   });
 
-  // Любое текстовое сообщение — обрабатываем по состоянию или relay в чат
+  // Любое текстовое сообщение — обрабатываем по состоянию
   shopBot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return; // команды обработаны выше
@@ -1189,30 +1112,8 @@ function initShopBot() {
       return;
     }
 
-    // No auth flow → check for active chat session and relay to customer
-    try {
-      const sess = await Chat.getActiveChat(chatId);
-      if (sess && sess.role === 'shop' && sess.order_id) {
-        const order = await Chat.getOrderForChat(sess.order_id);
-        if (order && order.chat_active && userBot && order.customer_chat_id) {
-          const text = msg.text.trim().slice(0, 2000);
-          const saved = await Chat.persistMessage({
-            order_id: order.id, sender: 'shop', sender_phone: sess.shop_phone, text, tg_message_id: msg.message_id
-          });
-          try {
-            await userBot.sendMessage(order.customer_chat_id,
-              `💬 <b>Магазин (заказ #${order.id}):</b>\n` + escHtml(text),
-              { parse_mode: 'HTML' }
-            );
-            if (saved) await Chat.markDelivered(saved.id);
-            await shopBot.sendMessage(chatId, '✅ Сообщение передано клиенту', { reply_to_message_id: msg.message_id }).catch(_=>{});
-          } catch (e) {
-            await shopBot.sendMessage(chatId, '⚠️ Не удалось передать клиенту: ' + e.message).catch(_=>{});
-          }
-          return;
-        }
-      }
-    } catch (e) { console.log('[shopBot relay]', e.message); }
+    // No chat functionality - just help
+    await shopBot.sendMessage(chatId, 'Используйте команды: /start /logout /cancel');
   });
 
   async function handlePhoneInput(chatId, rawPhone) {
@@ -1510,10 +1411,14 @@ async function notifyCustomerPaymentConfirmed(order) {
   if (!chatId && order.customer_telegram) {
     console.log('[notifyCustomerPaymentConfirmed] Trying to find chat_id by username:', order.customer_telegram);
     const username = order.customer_telegram.replace('@', '').trim().toLowerCase();
+    console.log('[notifyCustomerPaymentConfirmed] Username map keys:', Array.from(usernameToChatId.keys()));
+    console.log('[notifyCustomerPaymentConfirmed] Looking for:', username);
     chatId = usernameToChatId.get(username);
     if (chatId) {
       foundVia = 'username_map';
       console.log('[notifyCustomerPaymentConfirmed] Found chat_id from username map:', chatId);
+    } else {
+      console.log('[notifyCustomerPaymentConfirmed] Username not found in map');
     }
   }
 
