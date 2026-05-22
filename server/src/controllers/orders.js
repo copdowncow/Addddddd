@@ -327,13 +327,12 @@ exports.updateOrderStatus = async (req, res) => {
 
     if (error) throw error;
 
-    // After admin confirms payment, activate chat + notify seller + notify customer
     if (newStatus === 'payment_confirmed') {
-      console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— activating chat + notifying seller');
+      console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— notifying shop + customer');
       try {
-        const { notifySellerAboutOrder, activateOrderChatFlow } = require('../services/telegram');
-        await activateOrderChatFlow(data);
+        const { notifySellerAboutOrder, notifyCustomerOnPaymentConfirmed } = require('../services/telegram');
         await notifySellerAboutOrder(data);
+        await notifyCustomerOnPaymentConfirmed(data);
       } catch (e) {
         console.error('[updateOrderStatus] notify failed:', e.message);
       }

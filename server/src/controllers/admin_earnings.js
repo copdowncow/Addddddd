@@ -260,18 +260,6 @@ exports.resolveDispute = async (req, res) => {
       .single();
     if (error) throw error;
 
-    // Persist system message in chat history (audit trail)
-    try {
-      const Chat = require('../services/chat');
-      await Chat.persistMessage({
-        order_id: id,
-        sender: 'admin',
-        text: (action === 'refund'
-          ? '✅ Администратор: возврат одобрен. Деньги будут возвращены клиенту.'
-          : '✅ Администратор: спор закрыт в пользу магазина.') + (note ? '\nКомментарий: ' + note : ''),
-      });
-    } catch (_) {}
-
     // Notify both sides via bots
     try {
       const { notifyCustomerRaw, notifyShopRaw } = require('../services/telegram');
@@ -286,14 +274,12 @@ exports.resolveDispute = async (req, res) => {
 
       const sellerPhones = [...new Set((items || []).map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
       if (sellerPhones.length) {
-        const { data: shops } = await getClient()
-          .from('shops')
-          .select('telegram_chat_id, phone, shop_name')
-          .in('phone', sellerPhones);
+        const { findShopsBySellerPhones } = require('../services/telegram');
+        const shops = await findShopsBySellerPhones(sellerPhones);
         const shopHtml = action === 'refund'
           ? `⚠️ <b>Возврат одобрен администратором</b>\n\nЗаказ #${id}\n${note ? '\nКомментарий: ' + escHtml(note) + '\n' : ''}\nДеньги будут возвращены клиенту. Подробности — @rebuket_admin.`
           : `✅ <b>Спор закрыт в вашу пользу</b>\n\nЗаказ #${id}\n${note ? '\nКомментарий: ' + escHtml(note) + '\n' : ''}`;
-        for (const s of shops || []) {
+        for (const s of shops) {
           if (s.telegram_chat_id) {
             await notifyShopRaw(s.telegram_chat_id, shopHtml).catch(() => {});
           }

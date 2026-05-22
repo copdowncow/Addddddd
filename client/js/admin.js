@@ -146,7 +146,6 @@ async function renderDisputes() {
         </div>` : ''}
 
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-          ${o.chat_active ? `<button class="btn btn-outline" style="padding:8px 14px;font-size:.82rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button>` : ''}
           ${o.receipt_url ? `<a href="${esc(o.receipt_url)}" target="_blank" class="btn btn-outline" style="padding:8px 14px;font-size:.82rem;text-decoration:none">📸 Чек</a>` : ''}
           <button class="btn" style="padding:8px 14px;font-size:.82rem;background:#ef4444;color:#fff;border:0;border-radius:12px" onclick="resolveDispute('${o.id}','refund')">💸 Вернуть деньги</button>
           <button class="btn btn-primary" style="padding:8px 14px;font-size:.82rem" onclick="resolveDispute('${o.id}','reject')">✅ В пользу магазина</button>
@@ -772,7 +771,6 @@ async function renderOrders() {
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
               <span class="${statusMap[st]||'bd-y'}" style="font-size:.72rem">${statusLabel[st]||st}</span>
               <span style="font-size:.75rem;color:var(--gray)">${fmtD(o.created_at)}</span>
-              ${o.chat_active ? '<span style="font-size:.7rem;background:rgba(34,160,91,.12);color:var(--green-d);padding:2px 8px;border-radius:999px;font-weight:600">💬 Чат активен</span>' : ''}
             </div>
             <div class="acard-title">Заказ #${o.id}</div>
             <div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${esc(o.customer_name || '—')}</div>
@@ -797,8 +795,7 @@ async function renderOrders() {
 
         ${o.receipt_url ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
           <a href="${esc(o.receipt_url)}" target="_blank" class="btn btn-outline" style="padding:6px 12px;font-size:.8rem">📸 Чек оплаты</a>
-          ${o.chat_active ? `<button class="btn btn-outline" style="padding:6px 12px;font-size:.8rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button>` : ''}
-        </div>` : (o.chat_active ? `<div style="margin-top:8px"><button class="btn btn-outline" style="padding:6px 12px;font-size:.8rem" onclick="adminViewChat('${o.id}')">💬 Открыть чат</button></div>` : '')}
+        </div>` : ''}
 
         ${o.receiver_name ? `<div style="margin-top:8px;padding:10px;background:#f0f9ff;border-radius:8px;font-size:.82rem;color:#0c4a6e">
           <div style="font-weight:700;margin-bottom:4px">👤 Получит другой человек:</div>
@@ -815,57 +812,6 @@ async function renderOrders() {
     }).join('');
   } catch(e) { console.error(e); t.innerHTML='<div class="empty"><span>❌</span><h3>Ошибка загрузки</h3></div>'; }
 }
-
-window.adminViewChat = async (orderId) => {
-  // Create or reuse modal
-  let modal = document.getElementById('admin-chat-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'admin-chat-modal';
-    modal.className = 'overlay';
-    modal.innerHTML = `
-      <div class="modal" style="max-width:560px;padding:0;overflow:hidden">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
-          <div>
-            <div style="font-weight:700">💬 Чат заказа</div>
-            <div id="admin-chat-order-id" style="font-size:.78rem;color:var(--gray)"></div>
-          </div>
-          <button class="modal-x" onclick="document.getElementById('admin-chat-modal').classList.remove('open')" style="position:static">✕</button>
-        </div>
-        <div id="admin-chat-msgs" class="chat-msgs" style="max-height:60vh"></div>
-        <div style="padding:12px 16px;border-top:1px solid var(--border);font-size:.78rem;color:var(--gray);text-align:center">Только просмотр · модерация споров</div>
-      </div>`;
-    document.body.appendChild(modal);
-  }
-  document.getElementById('admin-chat-order-id').textContent = '#' + orderId;
-  const list = document.getElementById('admin-chat-msgs');
-  list.innerHTML = '<div class="loader">Загружаем…</div>';
-  modal.classList.add('open');
-  try {
-    const r = await fetch('/api/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Ошибка');
-    const msgs = d.data || [];
-    if (!msgs.length) {
-      list.innerHTML = '<div style="text-align:center;color:var(--gray);font-size:.85rem;padding:24px">Сообщений пока нет</div>';
-      return;
-    }
-    const escHtml = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-    const fmtTime = ts => { try { return new Date(ts).toLocaleString('ru', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }); } catch { return ''; } };
-    list.innerHTML = msgs.map(m => {
-      const role = m.sender;
-      const cls = role === 'shop' ? 'shop' : (role === 'system' || role === 'admin') ? 'system' : 'customer';
-      if (cls === 'system') return `<div class="chat-msg system">${escHtml(m.text || '')}</div>`;
-      const who = role === 'shop' ? '🏪 Магазин' : '👤 Клиент';
-      return `<div class="chat-msg ${cls}"><div style="font-size:.7rem;opacity:.7;margin-bottom:2px">${who}</div>${escHtml(m.text || (m.photo_url ? '📷 фото' : ''))}<div class="meta">${fmtTime(m.created_at)}</div></div>`;
-    }).join('');
-    list.scrollTop = list.scrollHeight;
-  } catch (e) {
-    list.innerHTML = '<div style="text-align:center;color:var(--red);padding:24px">' + (e.message || 'Ошибка') + '</div>';
-  }
-};
 
 window.confirmOrder = async (id) => {
   try {

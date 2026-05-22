@@ -26,7 +26,6 @@ const P    = require('./controllers/products');
 const I    = require('./controllers/inquiries');
 const S    = require('./controllers/shops');
 const O    = require('./controllers/orders');
-const C    = require('./controllers/chat');
 const E    = require('./controllers/admin_earnings');
 const AS   = require('./controllers/admin_shops');
 
@@ -131,11 +130,6 @@ router.get('/admin/shops',                          adminAuth, AS.listShops);
 router.patch('/admin/shops/:id',                    adminAuth, AS.updateShop);
 router.post('/admin/shops/:id/reset-password',      adminAuth, AS.resetShopPassword);
 router.delete('/admin/shops/:id',                   adminAuth, AS.banShop);
-
-// ── Order chat (relay messages) ──────────────────────────
-router.get('/shops/admin/orders/:id/messages',  shopAuth,  C.shopListMessages);
-router.post('/shops/admin/orders/:id/messages', shopAuth,  C.shopSendMessage);
-router.get('/admin/orders/:id/messages',        adminAuth, C.adminListMessages);
 
 // ── App ──────────────────────────────────────────────────
 app.set('trust proxy', 1);

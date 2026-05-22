@@ -489,20 +489,6 @@ async function renderShopAdminOrders() {
           <button class="btn btn-outline" style="flex:1;padding:8px;font-size:.8rem" onclick="shopRejectOrder('${o.id}')">❌ Отклонить</button>
         </div>` : ''}
 
-        ${o.chat_active ? `
-          <div style="margin-top:12px">
-            <button class="btn btn-outline" style="width:100%;padding:9px;font-size:.85rem;border-radius:12px" onclick="toggleShopChat('${o.id}')">
-              💬 <span id="chat-toggle-label-${o.id}">Открыть чат с клиентом</span>
-            </button>
-            <div id="chat-panel-${o.id}" class="chat-panel" style="display:none;margin-top:10px">
-              <div class="chat-msgs" id="chat-msgs-${o.id}"><div style="text-align:center;color:var(--gray);font-size:.82rem;padding:18px">Загружаем…</div></div>
-              <form class="chat-input-bar" onsubmit="event.preventDefault(); sendShopChat('${o.id}');">
-                <input id="chat-input-${o.id}" type="text" placeholder="Напишите клиенту…" maxlength="2000" autocomplete="off">
-                <button type="submit">Отправить</button>
-              </form>
-            </div>
-          </div>
-        ` : ''}
       </div>`;
     }).join('');
   } catch (e) {
@@ -545,83 +531,6 @@ window.shopRejectOrder = async (id) => {
     toast('❌ Заказ отклонен', 'err');
     renderShopAdminOrders();
   } catch (e) { toast('Ошибка: ' + e.message, 'err'); }
-};
-
-// ─── Seller chat with customer (relay through bots) ─────────
-window.toggleShopChat = async function(orderId) {
-  const panel = document.getElementById('chat-panel-' + orderId);
-  const label = document.getElementById('chat-toggle-label-' + orderId);
-  if (!panel) return;
-  if (panel.style.display === 'none') {
-    panel.style.display = 'flex';
-    panel.style.flexDirection = 'column';
-    if (label) label.textContent = 'Скрыть чат';
-    await loadShopChat(orderId);
-    // poll every 4s while open
-    panel._poll = setInterval(() => loadShopChat(orderId, true), 4000);
-  } else {
-    panel.style.display = 'none';
-    if (label) label.textContent = 'Открыть чат с клиентом';
-    if (panel._poll) { clearInterval(panel._poll); panel._poll = null; }
-  }
-};
-
-async function loadShopChat(orderId, silent) {
-  const list = document.getElementById('chat-msgs-' + orderId);
-  if (!list) return;
-  try {
-    const token = localStorage.getItem('shop_admin_token');
-    const r = await fetch('/api/shops/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Ошибка');
-    const msgs = d.data || [];
-    if (!msgs.length) {
-      list.innerHTML = '<div style="text-align:center;color:var(--gray);font-size:.82rem;padding:18px">Сообщений пока нет.<br>Напишите клиенту первым.</div>';
-      return;
-    }
-    const escHtml = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-    const fmtTime = ts => {
-      try { const d = new Date(ts); return d.toLocaleTimeString('ru', { hour:'2-digit', minute:'2-digit' }); } catch { return ''; }
-    };
-    list.innerHTML = msgs.map(m => {
-      const role = m.sender; // 'customer' | 'shop' | 'system' | 'admin'
-      const cls = role === 'shop' ? 'shop' : (role === 'system' || role === 'admin') ? 'system' : 'customer';
-      if (cls === 'system') return `<div class="chat-msg system">${escHtml(m.text || '')}</div>`;
-      return `<div class="chat-msg ${cls}">${escHtml(m.text || (m.photo_url ? '📷 фото' : ''))}<div class="meta">${fmtTime(m.created_at)}${m.delivered ? ' · ✓' : ''}</div></div>`;
-    }).join('');
-    // auto-scroll to bottom
-    list.scrollTop = list.scrollHeight;
-  } catch (e) {
-    if (!silent) list.innerHTML = '<div style="text-align:center;color:var(--red);font-size:.82rem;padding:18px">' + (e.message || 'Ошибка') + '</div>';
-  }
-}
-
-window.sendShopChat = async function(orderId) {
-  const input = document.getElementById('chat-input-' + orderId);
-  if (!input) return;
-  const text = (input.value || '').trim();
-  if (!text) return;
-  const btn = input.parentElement.querySelector('button');
-  if (btn) btn.disabled = true;
-  try {
-    const token = localStorage.getItem('shop_admin_token');
-    const r = await fetch('/api/shops/admin/orders/' + encodeURIComponent(orderId) + '/messages', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Ошибка');
-    input.value = '';
-    await loadShopChat(orderId);
-  } catch (e) {
-    toast(e.message || 'Ошибка отправки', 'err');
-  } finally {
-    if (btn) btn.disabled = false;
-    input.focus();
-  }
 };
 
 window.deleteShopProduct = async function(id) {
