@@ -2427,9 +2427,6 @@ window.completeCheckout = async () => {
     if (tgUid) fd.append('customer_chat_id', String(tgUid));
   } catch(_) {}
   
-  // Telegram username is now required
-  fd.append('customer_telegram', telegram);
-  
   // Fast order and delivery time
   if (fastOrder) {
     fd.append('fast_order', 'true');
