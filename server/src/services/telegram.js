@@ -25,7 +25,16 @@ const customerPendingRefundReason = new Map();
 const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
 
 function getMiniAppUrl() {
-  return (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
+  const url = (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
+  console.log('[getMiniAppUrl] MINI_APP_URL:', process.env.MINI_APP_URL);
+  console.log('[getMiniAppUrl] SITE_URL:', process.env.SITE_URL);
+  console.log('[getMiniAppUrl] Final URL:', url);
+  // Fallback to Railway production URL if not set
+  if (!url) {
+    console.log('[getMiniAppUrl] No URL configured, using Railway fallback');
+    return 'https://re-production-57e4.up.railway.app';
+  }
+  return url;
 }
 
 // Lazily create userBot if it was not started (e.g. missing token at startup)
