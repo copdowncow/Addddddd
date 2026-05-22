@@ -202,33 +202,12 @@ async function notifyAdminAboutOrder(order) {
   if (!adminBot) { console.error('[notifyAdminAboutOrder] adminBot not initialized'); return; }
   if (adminChatIds.size === 0) { console.error('[notifyAdminAboutOrder] No admin chat IDs'); return; }
 
-  let items = [];
-  if (Array.isArray(order.items)) items = order.items;
-  else if (typeof order.items === 'string' && order.items.trim()) {
-    try { items = JSON.parse(order.items); } catch (e) { items = []; }
-  }
-  const itemsList = (items || [])
-    .map(i => `• ${i.title || i.name || 'Товар'} — ${(Number(i.price)||0).toLocaleString('ru')} сом.`)
-    .join('\n');
-  const deliveryLabel = order.delivery_type === 'pickup' ? '🏪 Самовывоз' : '🚕 Такси';
   const adminUrl = `${getMiniAppUrl()}/#admin`;
 
-  let message = `🛒 <b>НОВЫЙ ЗАКАЗ #${order.id}</b>\n\n`;
-  if (order.customer_name) message += `👤 Имя: ${order.customer_name}\n`;
-  message += `📞 Телефон: ${order.customer_phone}\n`;
-  message += `📍 Адрес: ${order.customer_address}\n`;
-  message += `🚚 Доставка: ${deliveryLabel}\n`;
-  message += `💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.\n\n`;
-  if (order.fast_order) message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
-  if (order.delivery_time) message += `⏰ Желаемое время: ${order.delivery_time}\n`;
-  if (order.fast_order || order.delivery_time) message += `\n`;
-  message += `<b>Товары:</b>\n${itemsList}\n`;
-  if (order.receiver_name) {
-    message += `\n👤 <b>Получит другой человек:</b>\n`;
-    message += `Имя: ${order.receiver_name}\n`;
-    message += `Телефон: ${order.receiver_phone}\n`;
-    message += `Адрес: ${order.receiver_address}\n`;
-  }
+  // Простое сообщение о новом заказе
+  let message = `✅ <b>Ваш чек одобрен успешно!</b>\n\n`;
+  message += `� Заказ #${order.id}\n`;
+  message += `💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.\n`;
   message += `\n🔗 <a href="${adminUrl}">Открыть в админ-панели</a>`;
 
   const actionsKeyboard = {
@@ -378,23 +357,25 @@ async function notifySellerAboutOrder(order) {
 }
 
 async function notifyAdminAboutShopOrder(order, shop) {
-  if (!adminBot) return;
-  const action = ['seller_accepted', 'confirmed'].includes(order.status)
-    ? '✅ ПРИНЯЛ ЗАКАЗ'
-    : (order.status === 'rejected' ? '❌ ОТКАЗАЛ В ЗАКАЗЕ' : `🔄 ${order.status.toUpperCase()}`);
-  const shopName = shop.shop_name || shop.phone;
+  // Отключено: статусы отправляются только клиенту, а не админу
+  // if (!adminBot) return;
+  // const action = ['seller_accepted', 'confirmed'].includes(order.status)
+  //   ? '✅ ПРИНЯЛ ЗАКАЗ'
+  //   : (order.status === 'rejected' ? '❌ ОТКАЗАЛ В ЗАКАЗЕ' : `🔄 ${order.status.toUpperCase()}`);
+  // const shopName = shop.shop_name || shop.phone;
 
-  let message = `🏪 <b>РЕШЕНИЕ МАГАЗИНА</b>\n\n`;
-  message += `<b>Имя магазина:</b> ${shopName}\n`;
-  message += `<b>Номер:</b> ${shop.phone}\n`;
-  message += `<b>Действие:</b> ${action}\n\n`;
-  message += `<b>Заказчик:</b> ${order.customer_phone}\n`;
-  if (order.receiver_name) message += `<b>Получатель:</b> ${order.receiver_name} (${order.receiver_phone})\n`;
-  message += `\n💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.`;
+  // let message = `🏪 <b>РЕШЕНИЕ МАГАЗИНА</b>\n\n`;
+  // message += `<b>Имя магазина:</b> ${shopName}\n`;
+  // message += `<b>Номер:</b> ${shop.phone}\n`;
+  // message += `<b>Действие:</b> ${action}\n\n`;
+  // message += `<b>Заказчик:</b> ${order.customer_phone}\n`;
+  // if (order.receiver_name) message += `<b>Получатель:</b> ${order.receiver_name} (${order.receiver_phone})\n`;
+  // message += `\n💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.`;
 
-  for (const chatId of adminChatIds) {
-    await adminBot.sendMessage(chatId, message, { parse_mode: 'HTML' });
-  }
+  // for (const chatId of adminChatIds) {
+  //   await adminBot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+  // }
+  console.log('[notifyAdminAboutShopOrder] Disabled - statuses sent only to customer');
 }
 
 function escHtml(s) {
