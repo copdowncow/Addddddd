@@ -1,7 +1,4 @@
-/* ──────────────────────────────────────────────────────────
-   ReBuket — Premium UI overlay
-   Loaded AFTER style.css. Augments existing classes; no breaking.
-   ────────────────────────────────────────────────────────── */
+
 
 :root {
   --p-shadow-sm: 0 1px 2px rgba(15,17,23,.04), 0 1px 3px rgba(15,17,23,.06);
@@ -15,7 +12,6 @@
   --p-ease: cubic-bezier(.22,.61,.36,1);
 }
 
-/* ── Product cards — premium look ───────────────────────── */
 .product-card {
   border-radius: var(--p-radius-lg) !important;
   overflow: hidden;
@@ -399,7 +395,6 @@
   box-shadow: 0 0 0 3px rgba(34,160,91,.12);
 }
 
-/* Stats cards icons */
 .stats-bar .s-card em {
   display: inline-flex;
   align-items: center;
@@ -422,7 +417,6 @@
   .aact-btn { padding: 8px 12px; font-size: .78rem; }
 }
 
-/* ── Product detail page — premium mobile-first ─────────── */
 .pd-wrap {
   background: #fff;
   border-radius: var(--p-radius-xl);
@@ -487,7 +481,6 @@
   margin: 4px 0 !important;
 }
 
-/* Share row — refined */
 .share-row {
   background: #f5f6f8 !important;
   border: 1px solid rgba(15,17,23,.06) !important;
@@ -512,7 +505,6 @@
 }
 .share-row button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(34,160,91,.32) !important; }
 
-/* Address/time info card */
 .pd-info {
   background: linear-gradient(135deg,#f7faff 0%,#fafbfc 100%) !important;
   border: 1px solid rgba(59,130,246,.12) !important;
@@ -529,7 +521,6 @@
   font-weight: 700 !important;
 }
 
-/* Buy CTA — keep premium */
 .pd-cart-btn {
   border-radius: var(--p-radius-lg) !important;
   font-family: 'Outfit', sans-serif !important;
@@ -537,7 +528,6 @@
   margin-top: 4px !important;
 }
 
-/* Telegram + Instagram pair */
 .pd-body > div:last-child .btn {
   border-radius: var(--p-radius) !important;
   font-weight: 700 !important;
@@ -557,7 +547,6 @@
 }
 .btn-ig:hover { box-shadow: 0 6px 16px rgba(220,39,67,.32) !important; }
 
-/* Shop info box on detail page */
 .pd-shop-box {
   background: linear-gradient(135deg,#f0fff5 0%,#e8faef 100%) !important;
   border: 1px solid rgba(34,160,91,.18) !important;
@@ -587,7 +576,6 @@
   .pd-cart-btn { font-size: .92rem !important; padding: 14px 16px !important; }
 }
 
-/* ── Shop profile page — refined ─────────────────────────── */
 .shop-page-header {
   background: linear-gradient(135deg, #fff 0%, #f0fff5 60%, #e8faef 100%) !important;
   border-radius: var(--p-radius-xl) !important;
@@ -637,7 +625,6 @@
   }
 }
 
-/* ── Admin stats page ───────────────────────────────────── */
 .stat-box {
   background: #fff;
   border: 1px solid rgba(15,17,23,.06);
@@ -699,7 +686,6 @@
   letter-spacing: -.01em;
 }
 
-/* Empty state */
 .empty {
   text-align: center;
   padding: 48px 24px;
@@ -725,7 +711,6 @@
   color: var(--gray, #5b6471);
 }
 
-/* ── Cart / drawer polish ───────────────────────────────── */
 .cart-drawer {
   box-shadow: -20px 0 60px rgba(15,17,23,.18);
 }
@@ -734,7 +719,6 @@
 }
 .cart-checkout-btn:hover { transform: translateY(-1px); box-shadow: var(--p-shadow-lg); }
 
-/* Cart item layout — make qty stepper inline below price */
 .cart-item {
   display: grid !important;
   grid-template-columns: 72px 1fr auto !important;
@@ -750,7 +734,6 @@
 .ci-remove { grid-area: remove; align-self: start; }
 .ci-qty    { grid-area: qty; justify-self: start; }
 
-/* Quantity stepper — premium pill design */
 .ci-qty {
   display: inline-flex;
   align-items: center;
@@ -813,7 +796,6 @@
   .ci-qty-val { min-width: 24px; font-size: .9rem; }
 }
 
-/* ── Modal polish ───────────────────────────────────────── */
 .overlay {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -829,14 +811,12 @@
   to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
 
-/* ── Delivery / payer option states ─────────────────────── */
 .delivery-option, .payer-option {
   transition: border-color .2s var(--p-ease), background .2s var(--p-ease), transform .12s var(--p-ease) !important;
 }
 .delivery-option:hover, .payer-option:hover { transform: translateY(-1px); }
 .delivery-option:active, .payer-option:active { transform: scale(.99); }
 
-/* ── Toast / loader polish ──────────────────────────────── */
 .loader {
   display: flex; align-items: center; justify-content: center;
   padding: 40px 20px; color: var(--gray); font-size: .9rem;
@@ -850,7 +830,6 @@
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Skeleton shimmer (utility) ─────────────────────────── */
 .skeleton {
   background: linear-gradient(90deg,#f3f4f6 0%,#e9eaee 50%,#f3f4f6 100%);
   background-size: 200% 100%;
@@ -862,7 +841,6 @@
   100% { background-position: -200% 0; }
 }
 
-/* ── Shop profile polish (verified badge etc) ───────────── */
 .verified-badge {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 8px;
@@ -880,7 +858,6 @@
   box-shadow: var(--p-shadow-sm) inset;
 }
 
-/* ── Order chat (seller panel) ──────────────────────────── */
 .chat-panel {
   display: flex; flex-direction: column;
   background: #fff;
@@ -956,7 +933,6 @@
 .chat-input-bar button:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(34,160,91,.28); }
 .chat-input-bar button:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
 
-/* ── Mobile tweaks ──────────────────────────────────────── */
 @media (max-width: 720px) {
   .atabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
   .atab { white-space: nowrap; }

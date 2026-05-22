@@ -137,6 +137,11 @@ async function handleOrderCallback(callbackQuery) {
       try { await activateOrderChatFlow(updatedOrder); }
       catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
       try {
+        await notifyCustomerPaymentConfirmed(updatedOrder);
+      } catch (e) {
+        console.error('[handleOrderCallback] Failed to notify customer (payment_confirmed):', e.message);
+      }
+      try {
         await notifySellerAboutOrder(updatedOrder);
       } catch (e) {
         console.error('[handleOrderCallback] Failed to notify seller:', e.message);
@@ -1294,6 +1299,32 @@ function initShopBot() {
 }
 
 // ─────────────────────────────────────────────
+// ✅ Уведомление клиенту: чек подтверждён админом
+// ─────────────────────────────────────────────
+async function notifyCustomerPaymentConfirmed(order) {
+  console.log('[notifyCustomerPaymentConfirmed] called for order', order?.id, 'customer_chat_id:', order?.customer_chat_id);
+  if (!userBot) { console.log('[notifyCustomerPaymentConfirmed] userBot is null — skipping'); return; }
+  if (!order) { console.log('[notifyCustomerPaymentConfirmed] order is null — skipping'); return; }
+  if (!order.customer_chat_id) {
+    console.log('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id);
+    return;
+  }
+
+  const total = (Number(order.total) || 0).toLocaleString('ru');
+  const text =
+    `✅ <b>Чек подтверждён</b>\n\n` +
+    `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
+    `Магазин получил уведомление и уже начинает сборку.\n\n` +
+    `💰 Сумма: ${total} сом`;
+
+  try {
+    await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+  } catch (e) {
+    console.log('[notifyCustomerPaymentConfirmed]', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────
 // 📲 Красивые уведомления клиенту о смене статуса заказа
 // ─────────────────────────────────────────────
 async function notifyCustomerStatusChanged(order, shop) {
@@ -1680,6 +1711,7 @@ module.exports = {
   notifyAdminAboutOrder,
   notifyAdminAboutShopOrder,
   notifySellerAboutOrder,
+  notifyCustomerPaymentConfirmed,
   activateOrderChatFlow,
   relayShopToCustomer,
   relayCustomerToShop,
