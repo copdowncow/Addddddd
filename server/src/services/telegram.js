@@ -1321,22 +1321,11 @@ async function notifyCustomerPaymentConfirmed(order) {
     return;
   }
 
-  // Пытаемся найти chat_id всеми доступными способами
-  const chatId = order.customer_chat_id || await resolveChatId({
-    phone:    order.customer_phone,
-    username: order.customer_telegram,
-  });
-
+  // Прямо используем chat_id из заказа (должен быть из Mini App)
+  const chatId = order.customer_chat_id;
   if (!chatId) {
-    // No chat_id available, silently skip notification
-    console.log('[notifyCustomerPaymentConfirmed] No chat_id for order', order.id, '- skipping notification');
+    console.log('[notifyCustomerPaymentConfirmed] No chat_id in order', order.id);
     return;
-  }
-
-  // Сохраняем chat_id обратно в заказ если его там не было
-  if (!order.customer_chat_id && chatId) {
-    await patchOrderChatId(order.id, chatId);
-    order.customer_chat_id = chatId;
   }
 
   const total = (Number(order.total) || 0).toLocaleString('ru');
@@ -1359,11 +1348,8 @@ async function notifyCustomerPaymentRejected(order) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
 
-  const chatId = order.customer_chat_id || await resolveChatId({
-    phone:    order.customer_phone,
-    username: order.customer_telegram,
-  });
-
+  // Прямо используем chat_id из заказа (должен быть из Mini App)
+  const chatId = order.customer_chat_id;
   if (!chatId) {
     console.log('[notifyCustomerPaymentRejected] no chat_id for order', order.id);
     return;
@@ -1388,21 +1374,10 @@ async function notifyCustomerStatusChanged(order, shop) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
 
-  // Ищем chat_id всеми способами
-  let chatId = order.customer_chat_id;
+  // Прямо используем chat_id из заказа (должен быть из Mini App)
+  const chatId = order.customer_chat_id;
   if (!chatId) {
-    chatId = await resolveChatId({
-      phone:    order.customer_phone,
-      username: order.customer_telegram,
-    });
-    if (chatId) {
-      await patchOrderChatId(order.id, chatId);
-      order.customer_chat_id = chatId;
-    }
-  }
-
-  if (!chatId) {
-    console.log('[notifyCustomerStatusChanged] no chat_id for order', order.id, '— уведомление не отправлено');
+    console.log('[notifyCustomerStatusChanged] no chat_id for order', order.id);
     return;
   }
 
@@ -1642,16 +1617,8 @@ async function activateOrderChatFlow(order) {
     await Chat.persistMessage({ order_id: order.id, sender: 'system', text: 'Оплата подтверждена. Чат с магазином активирован.' });
   } catch (e) { console.error('[activateOrderChatFlow] persist:', e.message); }
 
-  // Находим реальный chat_id клиента
-  let customerChatId = order.customer_chat_id;
-  if (!customerChatId) {
-    customerChatId = await resolveChatId({ phone: order.customer_phone, username: order.customer_telegram });
-    if (customerChatId) {
-      await patchOrderChatId(order.id, customerChatId);
-      order.customer_chat_id = customerChatId;
-    }
-  }
-
+  // Прямо используем chat_id из заказа (должен быть из Mini App)
+  const customerChatId = order.customer_chat_id;
   if (customerChatId) {
     try {
       await Chat.setActiveChat(customerChatId, 'customer', order.id, null);
