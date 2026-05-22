@@ -131,13 +131,21 @@ async function notifyAdminAboutOrder(order) {
 }
 
 async function handleOrderCallback(callbackQuery) {
-  if (!adminBot) return;
+  console.log('[handleOrderCallback] START - Processing order callback');
+  if (!adminBot) {
+    console.error('[handleOrderCallback] adminBot is not initialized');
+    return;
+  }
   const data = callbackQuery.data || '';
   const match = data.match(/^(order_confirm|order_reject):(.+)$/);
-  if (!match) return;
+  if (!match) {
+    console.log('[handleOrderCallback] No match for callback data:', data);
+    return;
+  }
 
   const action = match[1];
   const orderId = match[2];
+  console.log('[handleOrderCallback] action:', action, 'orderId:', orderId);
   // Admin "confirm" = payment_confirmed (next step: seller decides)
   const status = action === 'order_confirm' ? 'payment_confirmed' : 'rejected';
   const label = status === 'payment_confirmed' ? '✅ Оплата подтверждена — продавец уведомлён' : '❌ Заказ отклонён';
@@ -145,8 +153,10 @@ async function handleOrderCallback(callbackQuery) {
   try {
     const { createSupabaseClient } = require('../db/supabase');
     const db = createSupabaseClient();
+    console.log('[handleOrderCallback] Updating order status to:', status);
     const { data: updatedOrder, error } = await db.from('orders').update({ status }).eq('id', orderId).select().single();
     if (error) throw new Error(error.message);
+    console.log('[handleOrderCallback] Order updated successfully. customer_chat_id:', updatedOrder.customer_chat_id, 'userBot exists:', !!userBot);
 
     await adminBot.answerCallbackQuery(callbackQuery.id, { text: label, show_alert: false });
     await adminBot.sendMessage(callbackQuery.from.id, `Заказ #${orderId} ${status === 'payment_confirmed' ? 'подтверждён (оплата)' : 'отклонён'}.
@@ -156,14 +166,31 @@ async function handleOrderCallback(callbackQuery) {
 
     // After payment confirmation, activate chat (notifies client) and notify seller
     if (status === 'payment_confirmed') {
-      try { await activateOrderChatFlow(updatedOrder); }
-      catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
+      console.log('[handleOrderCallback] Payment confirmed - activating chat flow and notifying parties');
       try {
+        console.log('[handleOrderCallback] Calling activateOrderChatFlow...');
+        await activateOrderChatFlow(updatedOrder);
+        console.log('[handleOrderCallback] activateOrderChatFlow completed');
+      }
+      catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow error:', e.message); }
+      
+      try {
+        console.log('[handleOrderCallback] Calling notifyCustomerPaymentConfirmed...');
+        await notifyCustomerPaymentConfirmed(updatedOrder);
+        console.log('[handleOrderCallback] notifyCustomerPaymentConfirmed completed');
+      } catch (e) {
+        console.error('[handleOrderCallback] Failed to notify customer about payment confirmation:', e.message);
+      }
+
+      try {
+        console.log('[handleOrderCallback] Calling notifySellerAboutOrder...');
         await notifySellerAboutOrder(updatedOrder);
+        console.log('[handleOrderCallback] notifySellerAboutOrder completed');
       } catch (e) {
         console.error('[handleOrderCallback] Failed to notify seller:', e.message);
       }
     } else if (status === 'rejected' && updatedOrder.customer_chat_id && userBot) {
+      console.log('[handleOrderCallback] Payment rejected - notifying customer');
       try {
         await userBot.sendMessage(updatedOrder.customer_chat_id,
           `❌ <b>Заказ отклонён</b>\n\n` +
@@ -171,6 +198,7 @@ async function handleOrderCallback(callbackQuery) {
           `Для уточнения свяжитесь с @rebuket_admin.`,
           { parse_mode: 'HTML' }
         );
+        console.log('[handleOrderCallback] Customer notified about rejection');
       } catch (e) {
         console.error('[handleOrderCallback] Failed to notify customer (reject):', e.message);
       }
@@ -197,6 +225,7 @@ async function handleOrderCallback(callbackQuery) {
         }
       } catch (ignore) {}
     }
+    console.log('[handleOrderCallback] END - Successfully processed callback');
   } catch (err) {
     console.error('[handleOrderCallback] Error updating order:', err.message);
     await adminBot.answerCallbackQuery(callbackQuery.id, { text: 'Ошибка при обновлении заказа', show_alert: true });
@@ -1319,14 +1348,21 @@ function initShopBot() {
 // ✅ Уведомление клиенту: чек подтверждён админом
 // ─────────────────────────────────────────────
 async function notifyCustomerPaymentConfirmed(order) {
-  console.log('[notifyCustomerPaymentConfirmed] called for order', order?.id, 'customer_chat_id:', order?.customer_chat_id);
-  if (!userBot && !ensureUserBot()) { console.log('[notifyCustomerPaymentConfirmed] userBot is null — skipping'); return; }
-  if (!order) { console.log('[notifyCustomerPaymentConfirmed] order is null — skipping'); return; }
+  console.log('[notifyCustomerPaymentConfirmed] START - called for order', order?.id, 'customer_chat_id:', order?.customer_chat_id);
+  if (!userBot && !ensureUserBot()) {
+    console.error('[notifyCustomerPaymentConfirmed] userBot is null and ensureUserBot failed — skipping');
+    return;
+  }
+  if (!order) {
+    console.error('[notifyCustomerPaymentConfirmed] order is null — skipping');
+    return;
+  }
   if (!order.customer_chat_id) {
-    console.log('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id);
+    console.error('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id, '- skipping');
     return;
   }
 
+  console.log('[notifyCustomerPaymentConfirmed] userBot exists:', !!userBot, 'customer_chat_id:', order.customer_chat_id);
   const total = (Number(order.total) || 0).toLocaleString('ru');
   const text =
     `✅ <b>Чек подтверждён</b>\n\n` +
@@ -1335,9 +1371,12 @@ async function notifyCustomerPaymentConfirmed(order) {
     `💰 Сумма: ${total} сом`;
 
   try {
+    console.log('[notifyCustomerPaymentConfirmed] Attempting to send message to customer_chat_id:', order.customer_chat_id);
     await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+    console.log('[notifyCustomerPaymentConfirmed] SUCCESS - Message sent to customer');
   } catch (e) {
-    console.log('[notifyCustomerPaymentConfirmed]', e.message);
+    console.error('[notifyCustomerPaymentConfirmed] FAILED - Error sending message:', e.message);
+    console.error('[notifyCustomerPaymentConfirmed] Full error:', e);
   }
 }
 
@@ -1604,34 +1643,53 @@ function startAutoConfirmInterval() {
 // ─────────────────────────────────────────────
 
 async function activateOrderChatFlow(order) {
-  if (!order || !order.id) return;
-  try { await Chat.activateOrderChat(order.id); } catch (e) { console.log('[chat.activate] err:', e.message); }
+  console.log('[activateOrderChatFlow] START - order:', order?.id, 'customer_chat_id:', order?.customer_chat_id);
+  if (!order || !order.id) {
+    console.error('[activateOrderChatFlow] Invalid order - returning');
+    return;
+  }
+  try {
+    console.log('[activateOrderChatFlow] Activating chat in database for order:', order.id);
+    await Chat.activateOrderChat(order.id);
+    console.log('[activateOrderChatFlow] Chat activated in database');
+  } catch (e) { console.error('[activateOrderChatFlow] chat.activate error:', e.message); }
 
   // Persist a system "chat opened" message
   try {
+    console.log('[activateOrderChatFlow] Persisting system message');
     await Chat.persistMessage({
       order_id: order.id,
       sender: 'system',
       text: 'Оплата подтверждена. Чат с магазином активирован.',
     });
-  } catch (_) {}
+    console.log('[activateOrderChatFlow] System message persisted');
+  } catch (e) { console.error('[activateOrderChatFlow] persistMessage error:', e.message); }
 
   // Activate session for customer
   if (order.customer_chat_id) {
-    try { await Chat.setActiveChat(order.customer_chat_id, 'customer', order.id, null); } catch (_) {}
+    try {
+      console.log('[activateOrderChatFlow] Setting active chat for customer:', order.customer_chat_id);
+      await Chat.setActiveChat(order.customer_chat_id, 'customer', order.id, null);
+      console.log('[activateOrderChatFlow] Customer active chat set');
+    } catch (e) { console.error('[activateOrderChatFlow] setActiveChat customer error:', e.message); }
+  } else {
+    console.warn('[activateOrderChatFlow] No customer_chat_id for order:', order.id);
   }
 
   // Activate session(s) for shop(s)
   let items = order.items;
   if (typeof items === 'string') { try { items = JSON.parse(items); } catch (_) { items = []; } }
   const sellerPhones = [...new Set((items || []).map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
+  console.log('[activateOrderChatFlow] Seller phones:', sellerPhones);
   if (sellerPhones.length) {
     try {
       const { createSupabaseClient } = require('../db/supabase');
       const db = createSupabaseClient();
       const { data: shops } = await db.from('shops').select('phone, telegram_chat_id, shop_name').in('phone', sellerPhones);
+      console.log('[activateOrderChatFlow] Shops found:', shops?.length);
       for (const s of shops || []) {
         if (s.telegram_chat_id) {
+          console.log('[activateOrderChatFlow] Setting active chat for shop:', s.phone, 'chat_id:', s.telegram_chat_id);
           await Chat.setActiveChat(s.telegram_chat_id, 'shop', order.id, s.phone);
           if (shopBot) {
             try {
@@ -1639,16 +1697,22 @@ async function activateOrderChatFlow(order) {
                 `💬 <b>Чат по заказу #${order.id} открыт</b>\n\nКлиент может писать вам сюда напрямую — все сообщения идут через бот, ваши Telegram-контакты не раскрываются.\n\n<i>Чтобы выйти из чата — отправьте /endchat</i>`,
                 { parse_mode: 'HTML' }
               );
-            } catch (_) {}
+              console.log('[activateOrderChatFlow] Shop notified about chat opening');
+            } catch (e) { console.error('[activateOrderChatFlow] shopBot sendMessage error:', e.message); }
+          } else {
+            console.warn('[activateOrderChatFlow] shopBot is not available');
           }
+        } else {
+          console.warn('[activateOrderChatFlow] Shop has no telegram_chat_id:', s.phone);
         }
       }
-    } catch (e) { console.log('[chat.activate shops] err:', e.message); }
+    } catch (e) { console.error('[activateOrderChatFlow] shops activation error:', e.message); }
   }
 
   // Notify customer with chat-opened CTA
   if (order.customer_chat_id && userBot) {
     try {
+      console.log('[activateOrderChatFlow] Sending chat-opened notification to customer:', order.customer_chat_id);
       await userBot.sendMessage(order.customer_chat_id,
         `✅ <b>Оплата подтверждена!</b>\n\n` +
         `📦 Заказ #${order.id}\n` +
@@ -1657,8 +1721,12 @@ async function activateOrderChatFlow(order) {
         `<i>Чтобы выйти из чата — отправьте /endchat</i>`,
         { parse_mode: 'HTML' }
       );
-    } catch (e) { console.log('[chat.activate customer notify] err:', e.message); }
+      console.log('[activateOrderChatFlow] Customer notification sent successfully');
+    } catch (e) { console.error('[activateOrderChatFlow] customer notify error:', e.message); }
+  } else {
+    console.warn('[activateOrderChatFlow] Cannot notify customer - customer_chat_id:', order.customer_chat_id, 'userBot exists:', !!userBot);
   }
+  console.log('[activateOrderChatFlow] END');
 }
 
 // Called by REST API (chat.shopSendMessage): send shop's text to customer
