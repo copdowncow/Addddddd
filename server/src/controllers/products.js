@@ -232,6 +232,7 @@ exports.getShopPublications = async (req, res) => {
         .from('products')
         .select('*', { count: 'exact' })
         .eq('seller_phone', shopPhone)
+        .eq('status', 'active')
         .order('created_at', { ascending: false })
         .range(off, off + lim - 1);
 

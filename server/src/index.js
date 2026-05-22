@@ -91,11 +91,13 @@ router.post('/shops/admin-login', S.adminLogin);
 router.get('/shops/admin/orders', shopAuth, O.getShopOrders);
 router.patch('/shops/admin/orders/:id/status', shopAuth, O.shopUpdateOrderStatus);
 
-router.post('/shops/register', S.register);   // ← ДОБАВЛЕНО
-router.post('/shops/login',    S.login);       // ← ДОБАВЛЕНО
-router.get('/shops/me',        shopAuth, S.me);
-router.patch('/shops/me',      shopAuth, uploadPhotoOptional, S.updateProfile);
-router.get('/shops/products', shopAuth, S.listProducts);
+router.post('/shops/register',      S.register);
+router.post('/shops/login',         S.login);
+router.get('/shops/by-phone',       S.getByPhone);
+router.get('/shops/me',             shopAuth, S.me);
+router.patch('/shops/me',           shopAuth, uploadPhotoOptional, S.updateProfile);
+router.get('/shops/products',       shopAuth, S.listProducts);
+router.patch('/shops/products/:id', shopAuth, S.updateProduct);
 router.delete('/shops/products/:id', shopAuth, S.deleteProduct);
 
 router.get('/admin/products',         adminAuth, P.adminList);

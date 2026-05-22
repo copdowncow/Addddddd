@@ -28,14 +28,15 @@ exports.getByPhone = async (req, res) => {
       .from('shops')
       .select('phone, shop_name, city, photo_url, description, status')
       .or(phoneFilter(phone))
-      .single();
+      .limit(1);
 
     if (error) throw error;
-    if (!data) {
+    const shop = Array.isArray(data) ? data[0] : null;
+    if (!shop) {
       return res.status(404).json({ error: 'Shop not found' });
     }
 
-    res.json(data);
+    res.json(shop);
   } catch (err) {
     console.error('Get shop by phone error:', err);
     res.status(500).json({ error: err.message });
@@ -327,13 +328,23 @@ exports.listProducts = async (req, res) => {
     const off = (Number(page) - 1) * lim;
     const phone = normalizePhone(req.shop?.phone);
 
-    console.log('[listProducts] Fetching products for shop phone:', phone);
+    // Look up the actual shop record to get the DB phone value
+    const { data: shopRow } = await getClient()
+      .from('shops')
+      .select('phone')
+      .eq('id', req.shop.shop_id)
+      .limit(1);
 
-    const phoneFilter = `seller_phone.eq.${phone},seller_phone.ilike.%${phone}%`;
+    const dbPhone = Array.isArray(shopRow) ? (shopRow[0]?.phone || phone) : phone;
+    const phones = [...new Set([dbPhone, phone].filter(Boolean))];
+    console.log('[listProducts] Shop phones to match:', phones);
+
+    // Build filter: exact match on each phone variant
+    const orParts = phones.map(p => `seller_phone.eq.${p}`).join(',');
     const { data, error, count } = await getClient()
       .from('products')
       .select('*', { count: 'exact' })
-      .or(phoneFilter)
+      .or(orParts)
       .order('created_at', { ascending: false })
       .range(off, off + lim - 1);
 

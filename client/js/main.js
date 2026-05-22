@@ -136,64 +136,84 @@ export async function loadMyShopProducts() {
 export async function viewShopProfile(phone) {
   if (!phone) return;
   goPage('shop-view');
-  
-  const avatar = document.getElementById('shop-view-avatar');
-  const nameEl = document.getElementById('shop-view-name');
+
+  const avatar    = document.getElementById('shop-view-avatar');
+  const nameEl    = document.getElementById('shop-view-name');
   const welcomeEl = document.getElementById('shop-view-welcome');
-  const subEl = document.getElementById('shop-view-sub');
-  const descEl = document.getElementById('shop-view-description');
-  const phoneEl = document.getElementById('shop-view-phone');
-  const countEl = document.getElementById('shop-view-count');
-  const listEl = document.getElementById('shop-view-pubs');
-  
-  // Set loading state
-  if (avatar) avatar.textContent = '🏪';
-  if (nameEl) nameEl.textContent = 'Загрузка...';
-  if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать в магазин';
-  if (subEl) subEl.textContent = 'Загружаем информацию о магазине...';
-  if (descEl) descEl.textContent = '';
-  if (phoneEl) phoneEl.textContent = '';
-  if (countEl) countEl.textContent = '…';
-  if (listEl) listEl.innerHTML = '<div class="loader">🌿 Загружаем…</div>';
-  
+  const subEl     = document.getElementById('shop-view-sub');
+  const descEl    = document.getElementById('shop-view-description');
+  const countEl   = document.getElementById('shop-view-count');
+  const listEl    = document.getElementById('shop-view-pubs');
+
+  // Initial static text (not "loading…")
+  if (avatar)    avatar.textContent = '🏪';
+  if (nameEl)    nameEl.textContent = 'Магазин';
+  if (welcomeEl) welcomeEl.textContent = '';
+  if (subEl)     subEl.textContent = '';
+  if (descEl)    { descEl.textContent = ''; descEl.style.display = 'none'; }
+  if (countEl)   countEl.textContent = '—';
+  if (listEl)    listEl.innerHTML = '<div class="loader">🌿</div>';
+
+  // 1) Try to load shop info — don't crash if unavailable
   try {
-    // Fetch shop info
     const resp = await fetch('/api/shops/by-phone?phone=' + encodeURIComponent(phone));
     if (resp.ok) {
-      const shopInfo = await resp.json();
-      if (nameEl) nameEl.textContent = shopInfo.shop_name || 'Магазин';
+      const s = await resp.json();
+      if (nameEl)    nameEl.textContent = s.shop_name || 'Магазин';
       if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
-      if (subEl) subEl.textContent = shopInfo.shop_name || 'Магазин';
-      if (descEl) descEl.textContent = shopInfo.description || 'У этого магазина пока нет описания.';
-      if (phoneEl) phoneEl.textContent = shopInfo.phone || phone || '—';
-      if (avatar) {
-        if (shopInfo.photo_url) {
-          avatar.innerHTML = '<img src="' + esc(shopInfo.photo_url) + '" style="width:100%;height:100%;object-fit:cover">';
-          avatar.style.background = 'transparent';
-        } else {
-          avatar.textContent = getShopAvatar(shopInfo.shop_name || 'Магазин');
-        }
+      if (subEl)     subEl.textContent = s.city ? '📍 ' + s.city : '';
+      if (descEl && s.description) { descEl.textContent = s.description; descEl.style.display = ''; }
+      if (avatar && s.photo_url) {
+        avatar.innerHTML = '<img src="' + esc(s.photo_url) + '" style="width:100%;height:100%;object-fit:cover">';
+        avatar.style.background = 'transparent';
+      } else if (avatar) {
+        avatar.textContent = getShopAvatar(s.shop_name || 'Магазин');
       }
+    } else {
+      // Shop profile not found — use product data to show shop name
+      if (nameEl) nameEl.textContent = 'Магазин';
+      if (subEl)  subEl.textContent = '';
     }
+  } catch (e) {
+    console.log('[viewShopProfile] shop info fetch error (non-critical):', e.message);
+  }
 
-    // Fetch shop publications
-    const pubsResp = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(phone) + '&limit=50&status=active');
-    if (!pubsResp.ok) throw new Error('Failed to fetch publications');
-    const pubs = await pubsResp.json();
+  // 2) Always load publications — this is the main content
+  try {
+    const pubsResp = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(phone) + '&limit=50');
+    const pubs = pubsResp.ok ? await pubsResp.json() : { data: [], total: 0 };
     const total = Number(pubs.total || 0);
     if (countEl) countEl.textContent = total;
-    
+
     if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
-      listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Нет публикаций</h3><p>У этого магазина пока нет публикаций.</p></div>';
+      if (listEl) listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Нет публикаций</h3><p>У этого магазина пока нет активных публикаций.</p></div>';
+      if (nameEl && nameEl.textContent === 'Магазин') {
+        nameEl.textContent = 'Магазин';
+      }
       return;
     }
-    
-    listEl.innerHTML = '<div class="pgrid">' + pubs.data.map(p => pCard(p)).join('') + '</div>';
-    
+
+    // Fill header from first publication if shop info was unavailable
+    const first = pubs.data[0] || {};
+    if (nameEl && (!nameEl.textContent || nameEl.textContent === 'Магазин')) {
+      nameEl.textContent = first.shop_name || 'Магазин';
+    }
+    if (welcomeEl) {
+      welcomeEl.textContent = 'Добро пожаловать';
+    }
+    if (subEl && !subEl.textContent) {
+      subEl.textContent = 'Показаны публикации магазина';
+    }
+    if (descEl && !descEl.textContent && first.description) {
+      descEl.textContent = first.description;
+      descEl.style.display = '';
+    }
+
+    if (listEl) listEl.innerHTML = '<div class="pgrid">' + pubs.data.map(p => pCard(p)).join('') + '</div>';
   } catch (err) {
-    console.error('Shop view error:', err);
-    if (nameEl) nameEl.textContent = 'Ошибка';
-    if (listEl) listEl.innerHTML = '<div class="empty"><span>❌</span><h3>Ошибка загрузки</h3><p>' + esc(err.message) + '</p></div>';
+    console.error('[viewShopProfile] pubs error:', err);
+    if (listEl) listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Нет публикаций</h3></div>';
+    if (countEl) countEl.textContent = '0';
   }
 }
 
@@ -219,12 +239,14 @@ export function logoutShopFromProfile() {
 
 async function renderShopProfile() {
   const shop = getShopSession();
-  const avatar = document.getElementById('shop-profile-page-avatar');
-  const nameEl = document.getElementById('shop-profile-page-name');
-  const subEl = document.getElementById('shop-profile-page-sub');
-  const countEl = document.getElementById('shop-profile-page-count');
-  const phoneEl = document.getElementById('shop-profile-page-phone');
-  const listEl = document.getElementById('shop-publications-list');
+  const avatar    = document.getElementById('shop-profile-page-avatar');
+  const nameEl    = document.getElementById('shop-profile-page-name');
+  const subEl     = document.getElementById('shop-profile-page-sub');
+  const countEl   = document.getElementById('shop-profile-page-count');
+  const phoneEl   = document.getElementById('shop-profile-page-phone');
+  const listEl    = document.getElementById('shop-publications-list');
+  const descEl    = document.getElementById('shop-profile-page-description');
+  const welcomeEl = document.getElementById('shop-profile-page-welcome');
 
   if (!shop.phone) {
     goPage('catalog');
@@ -232,72 +254,72 @@ async function renderShopProfile() {
     return;
   }
 
-  // Set basic info from session
-  if (avatar) avatar.textContent = getShopAvatar(shop.name || shop.phone);
-  if (nameEl) nameEl.textContent = shop.name || shop.phone;
-  if (phoneEl) phoneEl.textContent = shop.phone || '—';
-  if (subEl) subEl.textContent = 'Управляйте публикациями и настройками магазина';
-  const welcomeEl = document.getElementById('shop-profile-page-welcome');
+  // Set instant data from localStorage (no "Загрузка" text)
+  if (avatar)    avatar.textContent = getShopAvatar(shop.name || shop.phone);
+  if (nameEl)    nameEl.textContent = shop.name || shop.phone;
   if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
-  if (countEl) countEl.textContent = '…';
-  if (listEl) listEl.innerHTML = '<div class="loader">Загружаем публикации…</div>';
+  if (subEl)     subEl.textContent = 'Управляйте публикациями и настройками';
+  if (phoneEl)   phoneEl.textContent = shop.phone || '—';
+  if (countEl)   countEl.textContent = '—';
+  if (descEl)    { descEl.textContent = ''; descEl.style.display = 'none'; }
 
+  // 1) Load shop info (non-blocking for publications)
   try {
-    // Try to get shop info from API
     const resp = await shopFetch('GET', '/shops/me');
-    if (nameEl) nameEl.textContent = resp.shop_name || shop.name;
-    if (welcomeEl) welcomeEl.textContent = 'Добро пожаловать';
-    if (subEl) subEl.textContent = 'Управляйте публикациями и настройками';
-    if (phoneEl) phoneEl.textContent = resp.phone || shop.phone || '—';
-    
-    // Display photo if available
+    if (nameEl)    nameEl.textContent = resp.shop_name || shop.name;
+    if (phoneEl)   phoneEl.textContent = resp.phone || shop.phone || '—';
     if (avatar) {
       if (resp.photo_url) {
         avatar.innerHTML = '<img src="' + esc(resp.photo_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
         avatar.style.background = 'transparent';
       } else {
         avatar.textContent = getShopAvatar(resp.shop_name || shop.name);
-        avatar.style.background = '#ffffff';
       }
     }
-    const descEl = document.getElementById('shop-profile-page-description');
     if (descEl) {
-      descEl.textContent = resp.description || 'Добавьте описание магазина в редактировании профиля, чтобы покупатели быстрее находили вас.';
+      const d = resp.description || '';
+      descEl.textContent = d || 'Нет описания — добавьте через «Редактировать профиль»';
+      descEl.style.display = '';
     }
-    
-    // Update localStorage with latest data
     if (resp.shop_name) localStorage.setItem('shop_name', resp.shop_name);
     if (resp.photo_url) localStorage.setItem('shop_photo', resp.photo_url);
     if (typeof resp.description === 'string') localStorage.setItem('shop_description', resp.description);
-    
+  } catch (e) {
+    console.log('[renderShopProfile] /shops/me error (non-critical):', e.message);
+    if (descEl) { descEl.textContent = ''; descEl.style.display = 'none'; }
+  }
+
+  // 2) Load publications
+  try {
     const pubs = await shopFetch('GET', '/shops/products?limit=50');
     const total = Number(pubs.total || 0);
-    console.log('[renderShopProfile] Publications received:', pubs);
     if (countEl) countEl.textContent = total;
-    
-    if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
-      console.log('[renderShopProfile] No publications found');
-      listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление — оно появится здесь после проверки.</p></div>';
+
+    const list = Array.isArray(pubs.data) ? pubs.data : [];
+    if (list.length === 0) {
+      // Fallback to the public endpoint if the authenticated shop endpoint is empty/odd
+      try {
+        const fallback = await fetch('/api/shops-pub?shop_phone=' + encodeURIComponent(shop.phone) + '&limit=50');
+        const fallbackJson = fallback.ok ? await fallback.json() : { data: [], total: 0 };
+        const fallbackList = Array.isArray(fallbackJson.data) ? fallbackJson.data : [];
+        if (fallbackList.length > 0) {
+          if (countEl) countEl.textContent = Number(fallbackJson.total || fallbackList.length || 0);
+          if (listEl) listEl.innerHTML = fallbackList.map(shopPubCard).join('');
+          return;
+        }
+      } catch (fallbackErr) {
+        console.log('[renderShopProfile] fallback pubs error:', fallbackErr.message);
+      }
+
+      if (listEl) listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление — оно появится здесь после проверки.</p></div>';
       return;
     }
-    console.log('[renderShopProfile] Rendering', pubs.data.length, 'publications');
-    listEl.innerHTML = pubs.data.map(shopPubCard).join('');
+
+    if (listEl) listEl.innerHTML = list.map(shopPubCard).join('');
   } catch (err) {
-    console.error('Shop profile error:', err);
-    if (countEl) countEl.textContent = 'Ошибка загрузки';
-    // Show publications even if shop info fails
-    try {
-      const pubs = await shopFetch('GET', '/shops/products?limit=50');
-      const total = Number(pubs.total || 0);
-      if (countEl) countEl.textContent = total;
-      if (!Array.isArray(pubs.data) || pubs.data.length === 0) {
-        listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Создайте новое объявление и оно появится здесь после проверки.</p></div>';
-        return;
-      }
-      listEl.innerHTML = pubs.data.map(shopPubCard).join('');
-    } catch (pubErr) {
-      if (listEl) listEl.innerHTML = '<div class="empty"><span>❌</span><h3>Ошибка загрузки публикаций</h3><p>' + esc(pubErr.message) + '</p></div>';
-    }
+    console.error('[renderShopProfile] pubs error:', err);
+    if (countEl) countEl.textContent = '0';
+    if (listEl) listEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Пока нет публикаций</h3><p>Не удалось загрузить. Попробуйте обновить страницу.</p></div>';
   }
 }
 
@@ -1573,7 +1595,7 @@ export async function refreshShopProfileUI() {
 
   if (countEl) {
     try {
-      const r = await shopFetch('GET', '/shops-pub' + qs({ shop_phone: shop.phone, limit: 1 }));
+      const r = await shopFetch('GET', '/shops/products?limit=1');
       countEl.textContent = (r.total || 0) + ' публикаций';
     } catch (e) {
       countEl.textContent = '— публикаций';
