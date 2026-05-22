@@ -1437,7 +1437,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <input type="text" id="checkout-telegram" placeholder="@username" style="font-size:.9rem" required>
           <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:4px">Обязательно для получения уведомлений о статусе заказа</small>
         </div>
-        <div class="form-group checkout-address-group">
+        <div class="form-group checkout-address-group" id="customer-address-group">
           <label>Ваш адрес *</label>
           <input type="text" id="checkout-address" placeholder="ул. Рудаки, 12">
         </div>
@@ -2171,19 +2171,36 @@ window.prefillCheckoutForm = () => {
 window.toggleAnotherPerson = () => {
   const checkbox = document.getElementById('checkout-another-person');
   const fields = document.getElementById('another-person-fields');
+  const customerAddressGroup = document.getElementById('customer-address-group');
+  
   fields.style.display = checkbox.checked ? 'block' : 'none';
+  customerAddressGroup.style.display = checkbox.checked ? 'none' : 'block';
 };
 
 window.goToCheckoutStep2 = () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
   const telegram = document.getElementById('checkout-telegram').value.trim();
-  const address = document.getElementById('checkout-address').value.trim();
+  const anotherPerson = document.getElementById('checkout-another-person').checked;
+  const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
+  const receiverAddress = anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : null;
   const msgEl = document.getElementById('checkout-msg');
   
-  if (!name || !phone || !telegram || !address) {
+  if (!name || !phone || !telegram) {
     msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните имя, телефон, Telegram и адрес';
+    msgEl.textContent = 'Заполните имя, телефон и Telegram';
+    return;
+  }
+  
+  if (!anotherPerson && !address) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = 'Заполните адрес';
+    return;
+  }
+  
+  if (anotherPerson && !receiverAddress) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = 'Заполните адрес получателя';
     return;
   }
   
@@ -2314,6 +2331,7 @@ window.resetCheckoutForm = () => {
   document.getElementById('checkout-address').value = '';
   document.getElementById('checkout-another-person').checked = false;
   document.getElementById('another-person-fields').style.display = 'none';
+  document.getElementById('customer-address-group').style.display = 'block';
   document.getElementById('checkout-receiver-name').value = '';
   document.getElementById('checkout-receiver-phone').value = '';
   document.getElementById('checkout-receiver-address').value = '';
@@ -2364,11 +2382,11 @@ window.completeCheckout = async () => {
   const name = document.getElementById('checkout-name').value.trim();
   const phone = document.getElementById('checkout-phone').value.trim();
   const telegram = document.getElementById('checkout-telegram').value.trim();
-  const address = document.getElementById('checkout-address').value.trim();
   const anotherPerson = document.getElementById('checkout-another-person').checked;
-  const receiverName = document.getElementById('checkout-receiver-name').value.trim();
-  const receiverPhone = document.getElementById('checkout-receiver-phone').value.trim();
-  const receiverAddress = document.getElementById('checkout-receiver-address').value.trim();
+  const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
+  const receiverName = anotherPerson ? document.getElementById('checkout-receiver-name').value.trim() : null;
+  const receiverPhone = anotherPerson ? document.getElementById('checkout-receiver-phone').value.trim() : null;
+  const receiverAddress = anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : null;
   const fastOrder = document.getElementById('checkout-fast-order').checked;
   const deliveryTime = document.getElementById('checkout-delivery-time').value.trim();
   const delivery = window.checkoutDelivery;
@@ -2378,6 +2396,18 @@ window.completeCheckout = async () => {
   if (!name || !telegram || !delivery) {
     msgEl.style.color = 'var(--red)';
     msgEl.textContent = !name ? 'Введите имя покупателя' : !telegram ? 'Введите Telegram' : 'Выберите способ доставки';
+    return;
+  }
+  
+  if (!anotherPerson && !address) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = 'Заполните адрес';
+    return;
+  }
+  
+  if (anotherPerson && (!receiverName || !receiverPhone || !receiverAddress)) {
+    msgEl.style.color = 'var(--red)';
+    msgEl.textContent = 'Заполните данные получателя';
     return;
   }
   
