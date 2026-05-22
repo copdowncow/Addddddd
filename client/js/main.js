@@ -446,6 +446,11 @@ async function renderShopAdminOrders() {
       const items = JSON.parse(o.items || '[]');
       const itemsList = items.map(i => `• ${i.title} — ${(i.price||0).toLocaleString('ru')} сом.`).join('<br>');
       
+      // Only show contact info after seller accepts the order
+      const canSeeContact = ['seller_accepted', 'preparing', 'ready', 'delivered'].includes(st);
+      const phoneDisplay = canSeeContact ? esc(o.customer_phone) : '***';
+      const addressDisplay = canSeeContact ? esc(o.customer_address) : '***';
+      
       return `<div class="acard">
         <div class="acard-top">
           <div class="acard-info">
@@ -454,8 +459,9 @@ async function renderShopAdminOrders() {
               <span style="font-size:.75rem;color:var(--gray)">${fmtD(o.created_at)}</span>
             </div>
             <div class="acard-title">Заказ #${o.id}</div>
-            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">📞 ${esc(o.customer_phone)}</div>
-            <div style="font-size:.78rem;color:var(--gray)">📍 ${esc(o.customer_address)}</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${esc(o.customer_name || '—')}</div>
+            ${canSeeContact ? `<div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${phoneDisplay}</div>` : ''}
+            ${canSeeContact ? `<div style="font-size:.78rem;color:var(--gray)">📍 ${addressDisplay}</div>` : ''}
             <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}</div>
             <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${(o.total||0).toLocaleString('ru')} сом.</div>
           </div>
@@ -910,6 +916,7 @@ window._pCardAddToCart = (uid, pAttr) => {
     slug: p.slug || p.id,
     is_shop_listing: isShopListing(p),
     seller_phone: p.seller_phone,
+    stock_quantity: p.stock_quantity || 999999,
     seller_name: p.seller_name || p.shop_name,
     seller_photo: p.photo_url || p.seller_photo,
   });

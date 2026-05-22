@@ -1346,6 +1346,27 @@ async function notifyCustomerPaymentConfirmed(order) {
   }
 }
 
+async function notifyCustomerPaymentRejected(order) {
+  console.log('[notifyCustomerPaymentRejected] called for order', order?.id, 'customer_chat_id:', order?.customer_chat_id);
+  if (!userBot && !ensureUserBot()) { console.log('[notifyCustomerPaymentRejected] userBot is null — skipping'); return; }
+  if (!order) { console.log('[notifyCustomerPaymentRejected] order is null — skipping'); return; }
+  if (!order.customer_chat_id) {
+    console.log('[notifyCustomerPaymentRejected] customer_chat_id missing for order', order.id);
+    return;
+  }
+
+  const text =
+    `❌ <b>Оплата отклонена</b>\n\n` +
+    `К сожалению, ваш заказ <b>#${order.id}</b> был отклонён.\n` +
+    `Для уточнения причин и поддержки напишите: @rebuket_admin`;
+
+  try {
+    await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+  } catch (e) {
+    console.log('[notifyCustomerPaymentRejected]', e.message);
+  }
+}
+
 // ─────────────────────────────────────────────
 // 📲 Красивые уведомления клиенту о смене статуса заказа
 // ─────────────────────────────────────────────
@@ -1734,6 +1755,7 @@ module.exports = {
   notifyAdminAboutShopOrder,
   notifySellerAboutOrder,
   notifyCustomerPaymentConfirmed,
+  notifyCustomerPaymentRejected,
   notifyCustomerStatusChanged,
   activateOrderChatFlow,
   relayShopToCustomer,

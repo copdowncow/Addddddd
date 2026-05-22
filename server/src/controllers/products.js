@@ -375,7 +375,7 @@ exports.createProduct = async (req, res) => {
       title, description, category, price, city,
       seller_name, seller_phone, seller_telegram,
       address, pickup_time, gift_when, market_price, size,
-      seller_chat_id
+      seller_chat_id, stock_quantity
     } = req.body;
 
     if (!title || !category || !price || !seller_phone) {
@@ -445,7 +445,8 @@ exports.createProduct = async (req, res) => {
         listing_type,
         photos: [],
         slug,
-        status: 'pending'
+        status: 'pending',
+        stock_quantity:  stock_quantity ? Number(stock_quantity) : 999999
       })
       .select()
       .single();
@@ -568,7 +569,7 @@ exports.adminUpdate = async (req, res) => {
       'title', 'description', 'category', 'price', 'city',
       'seller_name', 'seller_phone', 'seller_telegram',
       'address', 'pickup_time', 'status',
-      'gift_when', 'size', 'market_price'
+      'gift_when', 'size', 'market_price', 'stock_quantity'
     ];
 
     for (const f of fields) {

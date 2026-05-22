@@ -291,6 +291,17 @@ exports.updateOrderStatus = async (req, res) => {
         console.error('[updateOrderStatus] activate/notify failed:', e.message);
       }
     }
+    
+    // If payment failed/rejected, notify customer with support contact
+    if (newStatus === 'rejected') {
+      console.log('[updateOrderStatus] Payment rejected for order', data.id, '— notifying customer');
+      try {
+        const { notifyCustomerPaymentRejected } = require('../services/telegram');
+        await notifyCustomerPaymentRejected(data);
+      } catch (e) {
+        console.error('[updateOrderStatus] Failed to notify customer about payment rejection:', e.message);
+      }
+    }
 
     res.json(data);
   } catch (e) {

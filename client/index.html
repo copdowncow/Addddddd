@@ -1544,22 +1544,6 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">А.Х</div>
         </div>
         
-        <!-- Alipay Payment -->
-        <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
-          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">🇨🇳 Alipay</div>
-          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">+86 138 0013 8000</div>
-          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">Alipay China</div>
-          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">ReBuket</div>
-        </div>
-        
-        <!-- DS Payment -->
-        <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
-          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">💳 DS (Dushanbe Savings)</div>
-          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">5555 0000 1234 5678</div>
-          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">DS Bank</div>
-          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">ReBuket Account</div>
-        </div>
-        
         <div style="text-align:center;font-size:.8rem;color:rgba(255,255,255,.5)">
           После оплаты загрузите чек перевода
         </div>
@@ -2058,7 +2042,15 @@ window.removeFromCart = (idx) => { window._cart.splice(idx, 1); saveCart(); toas
 window.changeCartItemQty = (idx, delta) => {
   const item = window._cart[idx];
   if (!item) return;
-  const newQty = Math.max(1, (item.qty || 1) + delta);
+  const currentQty = item.qty || 1;
+  const newQty = Math.max(1, currentQty + delta);
+  
+  // Validate against stock quantity if available
+  if (item.stock_quantity && item.stock_quantity < 999999 && newQty > item.stock_quantity) {
+    toast(`Нет такого количества в наличии. Максимум: ${item.stock_quantity}`, 'err');
+    return;
+  }
+  
   item.qty = newQty;
   saveCart();
 };
@@ -2071,7 +2063,16 @@ window.addToCart = (item) => {
   // Check if item already exists in cart
   const existingIdx = window._cart.findIndex(i => i.id === item.id);
   if (existingIdx >= 0) {
-    window._cart[existingIdx].qty = (window._cart[existingIdx].qty || 1) + 1;
+    const currentQty = window._cart[existingIdx].qty || 1;
+    const newQty = currentQty + 1;
+    
+    // Validate against stock quantity if available
+    if (item.stock_quantity && item.stock_quantity < 999999 && newQty > item.stock_quantity) {
+      toast(`Нет такого количества в наличии. Максимум: ${item.stock_quantity}`, 'err');
+      return;
+    }
+    
+    window._cart[existingIdx].qty = newQty;
     saveCart();
     toast('🛒 Количество обновлено', 'success');
   } else {
@@ -2134,6 +2135,7 @@ window.goToCheckoutStep2 = () => {
   
   msgEl.textContent = '';
   document.getElementById('checkout-step-1').style.display = 'none';
+  document.getElementById('checkout-step-3').style.display = 'none';
   document.getElementById('checkout-step-2').style.display = 'block';
 };
 
@@ -2141,6 +2143,9 @@ window.goToCheckoutStep1 = () => {
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'none';
   document.getElementById('checkout-step-1').style.display = 'block';
+  // Clear any error messages
+  const msgEl = document.getElementById('checkout-msg');
+  if (msgEl) msgEl.textContent = '';
 };
 
 window.selectDelivery = (type) => {
@@ -2170,11 +2175,10 @@ window.selectDelivery = (type) => {
       if (el) el.textContent = amt.toLocaleString('ru') + ' сом';
     }).catch(() => {});
   } else {
-    // pickup → straight to step 3
+    // pickup → straight to step 3 with price calculation
     window.checkoutDeliveryPayer = 'pickup';
     payerBlock.style.display = 'none';
-    document.getElementById('checkout-step-2').style.display = 'none';
-    document.getElementById('checkout-step-3').style.display = 'block';
+    goToCheckoutStep3();
   }
 };
 
@@ -2243,6 +2247,10 @@ window.goToCheckoutStep3 = async () => {
   
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'block';
+  
+  // Scroll to top of modal
+  const modal = document.getElementById('checkout-modal');
+  if (modal) modal.scrollTop = 0;
 };
 
 window.resetCheckoutForm = () => {
@@ -2472,7 +2480,7 @@ window.renderProductCard = (p) => {
 
 window.cardAddToCart = (p, btn) => {
   const emoji = catEmoji(p.category || '');
-  window.addToCart({ id: p.id || p.pub_id, title: p.title, price: p.buyer_price || p.price || 0, city: p.city, size: p.size, img: (p.photos || [])[0] || null, emoji });
+  window.addToCart({ id: p.id || p.pub_id, title: p.title, price: p.buyer_price || p.price || 0, city: p.city, size: p.size, img: (p.photos || [])[0] || null, emoji, stock_quantity: p.stock_quantity || 999999 });
   const orig = btn.innerHTML;
   btn.innerHTML = '✓ Добавлено в корзину'; btn.classList.add('added'); btn.disabled = true;
   setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('added'); btn.disabled = false; }, 1800);
@@ -2527,7 +2535,7 @@ window.renderProductDetail = (p) => {
 
   window._currentPd  = p;
   window.pdAddToCart = (btn) => {
-    window.addToCart({ id: p.id || p.pub_id, title: p.title, price, city: p.city, size: p.size, img: imgs[0] || null, emoji });
+    window.addToCart({ id: p.id || p.pub_id, title: p.title, price, city: p.city, size: p.size, img: imgs[0] || null, emoji, stock_quantity: p.stock_quantity || 999999 });
     if (btn) {
       const orig = btn.innerHTML;
       btn.innerHTML = '✓ Добавлено!'; btn.classList.add('added'); btn.disabled = true;
