@@ -27,6 +27,12 @@ const KHUJAND_CITIES = ['худжанд', 'бустон', 'исфара'];
 // In-memory map for username -> chat_id (for testing, should be moved to database)
 const usernameToChatId = new Map();
 
+// Normalize username: remove @, trim, lowercase
+function normalizeUsername(username) {
+  if (!username) return null;
+  return username.toString().replace('@', '').trim().toLowerCase();
+}
+
 function getMiniAppUrl() {
   const url = (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
   console.log('[getMiniAppUrl] MINI_APP_URL:', process.env.MINI_APP_URL);
@@ -400,7 +406,7 @@ function initUserBot() {
 
     // Auto-register username if available
     if (username) {
-      const cleanUsername = username.replace('@', '').trim().toLowerCase();
+      const cleanUsername = normalizeUsername(username);
       usernameToChatId.set(cleanUsername, chatId);
       console.log('[bot /start] Auto-registered username:', cleanUsername, '-> chat_id:', chatId);
       console.log('[bot /start] Current username map size:', usernameToChatId.size);
@@ -470,11 +476,11 @@ function initUserBot() {
 
   // /register @username - register username for notifications
   userBot.onText(/\/register\s+(@?\w+)/, async (msg, match) => {
-    const username = match[1].replace('@', '').trim();
+    const username = normalizeUsername(match[1]);
     const chatId = msg.chat.id;
     
     // Save mapping
-    usernameToChatId.set(username.toLowerCase(), chatId);
+    usernameToChatId.set(username, chatId);
     console.log('[/register] Registered username:', username, '-> chat_id:', chatId);
     
     await userBot.sendMessage(msg.chat.id,
@@ -1410,7 +1416,8 @@ async function notifyCustomerPaymentConfirmed(order) {
   // Fallback 2: try to find chat_id by username from registered users
   if (!chatId && order.customer_telegram) {
     console.log('[notifyCustomerPaymentConfirmed] Trying to find chat_id by username:', order.customer_telegram);
-    const username = order.customer_telegram.replace('@', '').trim().toLowerCase();
+    const username = normalizeUsername(order.customer_telegram);
+    console.log('[notifyCustomerPaymentConfirmed] Normalized username:', username);
     console.log('[notifyCustomerPaymentConfirmed] Username map keys:', Array.from(usernameToChatId.keys()));
     console.log('[notifyCustomerPaymentConfirmed] Looking for:', username);
     chatId = usernameToChatId.get(username);
