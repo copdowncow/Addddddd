@@ -312,8 +312,8 @@ async function handleOrderCallback(callbackQuery) {
     );
 
     if (status === 'payment_confirmed') {
-      // Notifications are handled by the API endpoint in orders.js to avoid duplicates
-      // Only activate chat flow here
+      // Уведомляем клиента и включаем чат-логику
+      try { await notifyCustomerPaymentConfirmed(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentConfirmed:', e.message); }
       try { await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
     } else if (status === 'rejected') {
       try { await notifyCustomerPaymentRejected(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentRejected:', e.message); }
