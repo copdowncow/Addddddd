@@ -37,6 +37,7 @@ exports.createOrder = async (req, res) => {
       receiver_phone,
       receiver_address,
       customer_chat_id,
+      customer_telegram,
     } = req.body;
 
     const receiptFile = req.file;
@@ -158,6 +159,26 @@ exports.createOrder = async (req, res) => {
     const processed = await processImage(receiptFile);
     const receipt_url = await uploadPhoto(processed, `receipt-${Date.now()}.jpg`, 'image/jpeg');
 
+    // Try to resolve customer_telegram to chat_id if customer_chat_id is not provided
+    let finalChatId = customer_chat_id ? Number(customer_chat_id) : null;
+    if (!finalChatId && customer_telegram) {
+      console.log('[createOrder] customer_chat_id missing, trying to resolve from telegram username:', customer_telegram);
+      try {
+        // Try to find in shops table by phone (if customer is also a shop)
+        const { data: shop } = await getClient()
+          .from('shops')
+          .select('telegram_chat_id')
+          .eq('phone', customer_phone)
+          .maybeSingle();
+        if (shop?.telegram_chat_id) {
+          finalChatId = shop.telegram_chat_id;
+          console.log('[createOrder] Found chat_id from shops table:', finalChatId);
+        }
+      } catch (e) {
+        console.log('[createOrder] Error resolving telegram username:', e.message);
+      }
+    }
+
     const { data, error } = await getClient()
       .from('orders')
       .insert({
@@ -177,7 +198,8 @@ exports.createOrder = async (req, res) => {
         receiver_name: receiver_name || null,
         receiver_phone: receiver_phone || null,
         receiver_address: receiver_address || null,
-        customer_chat_id: customer_chat_id ? Number(customer_chat_id) : null,
+        customer_chat_id: finalChatId,
+        customer_telegram: customer_telegram || null,
         status: 'pending',
       })
       .select()

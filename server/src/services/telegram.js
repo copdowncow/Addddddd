@@ -1357,12 +1357,65 @@ async function notifyCustomerPaymentConfirmed(order) {
     console.error('[notifyCustomerPaymentConfirmed] order is null — skipping');
     return;
   }
-  if (!order.customer_chat_id) {
-    console.error('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id, '- skipping');
+
+  let chatId = order.customer_chat_id;
+  let foundVia = 'direct';
+
+  // Fallback 1: try to find customer's chat_id by phone number from shops table (if customer is also a shop)
+  if (!chatId && order.customer_phone) {
+    console.log('[notifyCustomerPaymentConfirmed] customer_chat_id missing, trying to find by phone:', order.customer_phone);
+    try {
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      const { data: shop } = await db.from('shops').select('telegram_chat_id').eq('phone', order.customer_phone).maybeSingle();
+      if (shop?.telegram_chat_id) {
+        chatId = shop.telegram_chat_id;
+        foundVia = 'shops_table';
+        console.log('[notifyCustomerPaymentConfirmed] Found chat_id from shops table:', chatId);
+      }
+    } catch (e) {
+      console.error('[notifyCustomerPaymentConfirmed] Error looking up chat_id by phone:', e.message);
+    }
+  }
+
+  // Fallback 2: try to find by customer_telegram username (if provided)
+  if (!chatId && order.customer_telegram) {
+    console.log('[notifyCustomerPaymentConfirmed] Trying to find by telegram username:', order.customer_telegram);
+    // Note: Telegram API doesn't allow searching users by username directly
+    // We'll store this for manual lookup by admin
+    console.log('[notifyCustomerPaymentConfirmed] Telegram username provided but cannot auto-resolve:', order.customer_telegram);
+  }
+
+  if (!chatId) {
+    console.error('[notifyCustomerPaymentConfirmed] customer_chat_id missing for order', order.id, '- skipping notification');
+    console.error('[notifyCustomerPaymentConfirmed] Customer phone:', order.customer_phone, 'telegram:', order.customer_telegram || 'not provided');
+    
+    // Notify admin about missing chat_id with clear action items
+    try {
+      const telegramInfo = order.customer_telegram 
+        ? `\n📱 Telegram: ${order.customer_telegram}` 
+        : '\n📱 Telegram: не указан (клиент не заполнил поле)';
+      
+      await sendToAdmins(
+        `⚠️ <b>КЛИЕНТ НЕ ПОЛУЧИТ УВЕДОМЛЕНИЕ</b>\n\n` +
+        `📦 Заказ #${order.id}\n` +
+        `📞 Телефон: ${order.customer_phone}\n` +
+        `${telegramInfo}\n` +
+        `💰 Сумма: ${(Number(order.total)||0).toLocaleString('ru')} сом\n\n` +
+        `❌ <b>Проблема:</b> Клиент не открыл Telegram Mini App при заказе, поэтому бот не может отправить уведомление.\n\n` +
+        `📋 <b>Что делать:</b>\n` +
+        `1. Позвоните клиенту: ${order.customer_phone}\n` +
+        `2. Напишите в Telegram: ${order.customer_telegram || 'не указан'}\n` +
+        `3. Сообщите: "Оплата подтверждена, магазин начинает сборку"\n\n` +
+        `💡 <b>Совет:</b> В будущем просите клиентов открывать заказ через Telegram Mini App (@ReBuketTj_Bot) для автоматических уведомлений.`
+      );
+    } catch (e) {
+      console.error('[notifyCustomerPaymentConfirmed] Failed to notify admin about missing chat_id:', e.message);
+    }
     return;
   }
 
-  console.log('[notifyCustomerPaymentConfirmed] userBot exists:', !!userBot, 'customer_chat_id:', order.customer_chat_id);
+  console.log('[notifyCustomerPaymentConfirmed] userBot exists:', !!userBot, 'customer_chat_id:', chatId, 'found_via:', foundVia);
   const total = (Number(order.total) || 0).toLocaleString('ru');
   const text =
     `✅ <b>Чек подтверждён</b>\n\n` +
@@ -1371,8 +1424,8 @@ async function notifyCustomerPaymentConfirmed(order) {
     `💰 Сумма: ${total} сом`;
 
   try {
-    console.log('[notifyCustomerPaymentConfirmed] Attempting to send message to customer_chat_id:', order.customer_chat_id);
-    await userBot.sendMessage(order.customer_chat_id, text, { parse_mode: 'HTML' });
+    console.log('[notifyCustomerPaymentConfirmed] Attempting to send message to customer_chat_id:', chatId);
+    await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
     console.log('[notifyCustomerPaymentConfirmed] SUCCESS - Message sent to customer');
   } catch (e) {
     console.error('[notifyCustomerPaymentConfirmed] FAILED - Error sending message:', e.message);
@@ -1710,10 +1763,28 @@ async function activateOrderChatFlow(order) {
   }
 
   // Notify customer with chat-opened CTA
-  if (order.customer_chat_id && userBot) {
+  let customerChatId = order.customer_chat_id;
+  
+  // Fallback: try to find customer's chat_id by phone number from shops table
+  if (!customerChatId && order.customer_phone) {
+    console.log('[activateOrderChatFlow] customer_chat_id missing, trying to find by phone:', order.customer_phone);
     try {
-      console.log('[activateOrderChatFlow] Sending chat-opened notification to customer:', order.customer_chat_id);
-      await userBot.sendMessage(order.customer_chat_id,
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      const { data: shop } = await db.from('shops').select('telegram_chat_id').eq('phone', order.customer_phone).maybeSingle();
+      if (shop?.telegram_chat_id) {
+        customerChatId = shop.telegram_chat_id;
+        console.log('[activateOrderChatFlow] Found chat_id from shops table:', customerChatId);
+      }
+    } catch (e) {
+      console.error('[activateOrderChatFlow] Error looking up chat_id by phone:', e.message);
+    }
+  }
+
+  if (customerChatId && userBot) {
+    try {
+      console.log('[activateOrderChatFlow] Sending chat-opened notification to customer:', customerChatId);
+      await userBot.sendMessage(customerChatId,
         `✅ <b>Оплата подтверждена!</b>\n\n` +
         `📦 Заказ #${order.id}\n` +
         `💰 Сумма: ${(Number(order.total)||0).toLocaleString('ru')} сом\n\n` +
@@ -1724,7 +1795,10 @@ async function activateOrderChatFlow(order) {
       console.log('[activateOrderChatFlow] Customer notification sent successfully');
     } catch (e) { console.error('[activateOrderChatFlow] customer notify error:', e.message); }
   } else {
-    console.warn('[activateOrderChatFlow] Cannot notify customer - customer_chat_id:', order.customer_chat_id, 'userBot exists:', !!userBot);
+    console.warn('[activateOrderChatFlow] Cannot notify customer - customer_chat_id:', customerChatId, 'userBot exists:', !!userBot);
+    if (!customerChatId) {
+      console.warn('[activateOrderChatFlow] Customer phone:', order.customer_phone, '- Client did not open Telegram Mini App');
+    }
   }
   console.log('[activateOrderChatFlow] END');
 }
