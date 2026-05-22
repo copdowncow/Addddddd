@@ -1408,12 +1408,26 @@ async function notifyCustomerPaymentConfirmed(order) {
     }
   }
 
-  // Fallback 2: try to find by customer_telegram username (if provided)
+  // Fallback 2: try to send message by username (only works if user has started the bot)
   if (!chatId && order.customer_telegram) {
-    console.log('[notifyCustomerPaymentConfirmed] Trying to find by telegram username:', order.customer_telegram);
-    // Note: Telegram API doesn't allow searching users by username directly
-    // We'll store this for manual lookup by admin
-    console.log('[notifyCustomerPaymentConfirmed] Telegram username provided but cannot auto-resolve:', order.customer_telegram);
+    console.log('[notifyCustomerPaymentConfirmed] Trying to send message by username:', order.customer_telegram);
+    // Remove @ if present
+    const username = order.customer_telegram.replace('@', '').trim();
+    try {
+      const total = (Number(order.total) || 0).toLocaleString('ru');
+      const text =
+        `✅ <b>Чек подтверждён</b>\n\n` +
+        `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
+        `Магазин получил уведомление и уже начинает сборку.\n\n` +
+        `💰 Сумма: ${total} сом`;
+      
+      await userBot.sendMessage(username, text, { parse_mode: 'HTML' });
+      console.log('[notifyCustomerPaymentConfirmed] SUCCESS - Message sent by username:', username);
+      return;
+    } catch (e) {
+      console.log('[notifyCustomerPaymentConfirmed] Could not send by username:', e.message);
+      console.log('[notifyCustomerPaymentConfirmed] User probably has not started the bot yet');
+    }
   }
 
   if (!chatId) {
