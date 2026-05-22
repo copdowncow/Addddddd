@@ -312,8 +312,8 @@ async function handleOrderCallback(callbackQuery) {
     );
 
     if (status === 'payment_confirmed') {
-      // Уведомляем клиента, но realtime-чат отключён
-      try { await notifyCustomerPaymentConfirmed(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentConfirmed:', e.message); }
+      try { await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
+      try { await notifySellerAboutOrder(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifySellerAboutOrder:', e.message); }
     } else if (status === 'rejected') {
       try { await notifyCustomerPaymentRejected(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentRejected:', e.message); }
     }
@@ -577,10 +577,42 @@ function initUserBot() {
     );
   });
 
-  // realtime customer <-> shop chat removed; bot no longer relays chat messages.
+  userBot.onText(/\/endchat/, async (msg) => {
+    try {
+      const sess = await Chat.getActiveChat(msg.chat.id);
+      if (sess) {
+        await Chat.clearActiveChat(msg.chat.id);
+        await userBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу. Новые сообщения от магазина придут сюда автоматически.');
+      } else {
+        await userBot.sendMessage(msg.chat.id, 'Активного чата нет.');
+      }
+    } catch (_) {}
+  });
+
   userBot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return;
     if (customerPendingRefundReason.has(msg.chat.id)) return;
+
+    try {
+      const sess = await Chat.getActiveChat(msg.chat.id);
+      if (sess && sess.role === 'customer' && sess.order_id) {
+        const order = await Chat.getOrderForChat(sess.order_id);
+        if (order && order.chat_active) {
+          const text = msg.text.trim().slice(0, 2000);
+          const saved = await Chat.persistMessage({
+            order_id: order.id, sender: 'customer', text, tg_message_id: msg.message_id
+          });
+          const delivered = await relayCustomerToShop(order, text);
+          if (saved) await Chat.markDelivered(saved.id);
+          await userBot.sendMessage(msg.chat.id,
+            delivered > 0 ? '✅ Сообщение передано магазину' : '⚠️ Магазин пока не подключился к боту. Сообщение сохранено.',
+            { reply_to_message_id: msg.message_id }
+          ).catch(() => {});
+          return;
+        }
+      }
+    } catch (e) { console.log('[userBot relay]', e.message); }
+
     await userBot.sendMessage(msg.chat.id,
       `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
       { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
@@ -1051,7 +1083,18 @@ function initShopBot() {
     await handlePhoneInput(chatId, phone);
   });
 
-  // realtime customer <-> shop chat removed; shop bot no longer relays chat messages.
+  shopBot.onText(/\/endchat/, async (msg) => {
+    try {
+      const sess = await Chat.getActiveChat(msg.chat.id);
+      if (sess) {
+        await Chat.clearActiveChat(msg.chat.id);
+        await shopBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу.');
+      } else {
+        await shopBot.sendMessage(msg.chat.id, 'Активного чата нет.');
+      }
+    } catch (_) {}
+  });
+
   shopBot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
@@ -1072,6 +1115,37 @@ function initShopBot() {
       }
       return;
     }
+
+    try {
+      const sess = await Chat.getActiveChat(chatId);
+      if (sess && sess.role === 'shop' && sess.order_id) {
+        const order = await Chat.getOrderForChat(sess.order_id);
+        if (order && order.chat_active) {
+          const text = msg.text.trim().slice(0, 2000);
+          const saved = await Chat.persistMessage({
+            order_id: order.id, sender: 'shop', sender_phone: sess.shop_phone, text, tg_message_id: msg.message_id
+          });
+          const customerChatId = await resolveCustomerChatId(order);
+          if (customerChatId && userBot) {
+            try {
+              await userBot.sendMessage(customerChatId,
+                `💬 <b>Магазин (заказ #${order.id}):</b>\n` + escHtml(text),
+                { parse_mode: 'HTML' }
+              );
+              if (saved) await Chat.markDelivered(saved.id);
+              await shopBot.sendMessage(chatId, '✅ Сообщение передано клиенту', { reply_to_message_id: msg.message_id }).catch(() => {});
+            } catch (e) {
+              console.log('[shopBot relay send]', e.message);
+              await shopBot.sendMessage(chatId, '⚠️ Не удалось доставить клиенту. Сообщение сохранено.').catch(() => {});
+            }
+          } else {
+            await shopBot.sendMessage(chatId, '⚠️ Клиент не подключён к боту. Сообщение сохранено.').catch(() => {});
+          }
+          return;
+        }
+      }
+    } catch (e) { console.log('[shopBot relay]', e.message); }
+
     await shopBot.sendMessage(chatId, 'Используйте команды: /start /logout /cancel');
   });
 
