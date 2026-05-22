@@ -202,6 +202,11 @@ async function notifyAdminAboutOrder(order) {
   if (!adminBot) { console.error('[notifyAdminAboutOrder] adminBot not initialized'); return; }
   if (adminChatIds.size === 0) { console.error('[notifyAdminAboutOrder] No admin chat IDs'); return; }
 
+  // Deduplication check
+  if (!shouldSendNotification(order.id, 'admin_new_order')) {
+    return;
+  }
+
   let items = [];
   if (Array.isArray(order.items)) items = order.items;
   else if (typeof order.items === 'string' && order.items.trim()) {
@@ -299,9 +304,9 @@ async function handleOrderCallback(callbackQuery) {
     );
 
     if (status === 'payment_confirmed') {
+      // Notifications are handled by the API endpoint in orders.js to avoid duplicates
+      // Only activate chat flow here
       try { await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
-      try { await notifyCustomerPaymentConfirmed(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentConfirmed:', e.message); }
-      try { await notifySellerAboutOrder(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifySellerAboutOrder:', e.message); }
     } else if (status === 'rejected') {
       try { await notifyCustomerPaymentRejected(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentRejected:', e.message); }
     }
@@ -331,6 +336,11 @@ async function notifySellerAboutOrder(order) {
   if (!order) return;
   const bot = shopBot;
   if (!bot) { console.log('[notifySellerAboutOrder] shopBot not available'); return; }
+
+  // Deduplication check
+  if (!shouldSendNotification(order.id, 'seller_order')) {
+    return;
+  }
 
   let items = [];
   if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch (e) { items = []; } }
@@ -1297,6 +1307,11 @@ async function notifyCustomerPaymentConfirmed(order) {
   if (!userBot && !ensureUserBot()) { console.error('[notifyCustomerPaymentConfirmed] no userBot'); return; }
   if (!order) return;
 
+  // Deduplication check
+  if (!shouldSendNotification(order.id, 'customer_payment_confirmed')) {
+    return;
+  }
+
   // Пытаемся найти chat_id всеми доступными способами
   const chatId = order.customer_chat_id || await resolveChatId({
     phone:    order.customer_phone,
@@ -1603,6 +1618,26 @@ function startAutoConfirmInterval() {
 // ─────────────────────────────────────────────
 // 💬 ORDER CHAT RELAY
 // ─────────────────────────────────────────────
+// In-memory deduplication cache for notifications (orderId -> timestamp)
+const notificationCache = new Map();
+const NOTIFICATION_DEDUP_WINDOW = 60000; // 1 minute
+
+function shouldSendNotification(orderId, type) {
+  const key = `${orderId}:${type}`;
+  const lastSent = notificationCache.get(key);
+  const now = Date.now();
+  if (lastSent && (now - lastSent) < NOTIFICATION_DEDUP_WINDOW) {
+    console.log(`[shouldSendNotification] Skipping duplicate ${type} for order ${orderId}`);
+    return false;
+  }
+  notificationCache.set(key, now);
+  // Clean old entries
+  for (const [k, v] of notificationCache) {
+    if (now - v > NOTIFICATION_DEDUP_WINDOW) notificationCache.delete(k);
+  }
+  return true;
+}
+
 async function activateOrderChatFlow(order) {
   if (!order?.id) return;
 
@@ -1639,7 +1674,8 @@ async function activateOrderChatFlow(order) {
       for (const s of shops || []) {
         if (s.telegram_chat_id) {
           await Chat.setActiveChat(s.telegram_chat_id, 'shop', order.id, s.phone);
-          if (shopBot) {
+          // Only send chat opening notification if not already sent recently
+          if (shouldSendNotification(order.id, 'chat_open_shop:' + s.telegram_chat_id) && shopBot) {
             try {
               await shopBot.sendMessage(s.telegram_chat_id,
                 `💬 <b>Чат по заказу #${order.id} открыт</b>\n\nКлиент может писать вам сюда. Telegram-контакты не раскрываются.\n\n<i>/endchat — выйти из чата</i>`,
@@ -1652,7 +1688,8 @@ async function activateOrderChatFlow(order) {
     } catch (e) { console.error('[activateOrderChatFlow] shops:', e.message); }
   }
 
-  if (customerChatId && userBot) {
+  // Only send customer notification if not already sent recently
+  if (customerChatId && userBot && shouldSendNotification(order.id, 'chat_open_customer:' + customerChatId)) {
     try {
       await userBot.sendMessage(customerChatId,
         `✅ <b>Оплата подтверждена!</b>\n\n` +
