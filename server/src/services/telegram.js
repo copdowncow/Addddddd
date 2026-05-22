@@ -107,7 +107,12 @@ async function resolveChatId({ phone, username, chatId }) {
 
   // 3. По телефону — из таблицы telegram_users
   if (phone) {
-    const variants = [phone, phone.replace(/^\+/, ''), '+' + phone.replace(/^\+/, '')];
+    const normalizedPhone = phone.replace(/[^\d+]/g, '');
+    const variants = [
+      normalizedPhone,
+      normalizedPhone.startsWith('+') ? normalizedPhone.replace(/^\+/, '') : '+' + normalizedPhone,
+      normalizedPhone.startsWith('+') ? normalizedPhone : '+' + normalizedPhone
+    ];
     const { data } = await db
       .from('telegram_users')
       .select('chat_id')
@@ -139,15 +144,18 @@ async function savePhoneMapping(phone, chatId, username) {
     const normalizedPhone = phone.replace(/[^\d+]/g, '');
     const normalizedUsername = username ? normalizeUsername(username) : null;
 
+    // Save with + prefix for consistency
+    const phoneWithPlus = normalizedPhone.startsWith('+') ? normalizedPhone : '+' + normalizedPhone;
+
     const { error } = await db
       .from('telegram_users')
       .upsert(
-        { phone: normalizedPhone, chat_id: chatId, username: normalizedUsername },
+        { phone: phoneWithPlus, chat_id: chatId, username: normalizedUsername },
         { onConflict: 'phone' }
       );
 
     if (error) console.error('[savePhoneMapping] DB error:', error.message);
-    else console.log('[savePhoneMapping] Saved:', normalizedPhone, '->', chatId);
+    else console.log('[savePhoneMapping] Saved:', phoneWithPlus, '->', chatId);
   } catch (e) {
     console.error('[savePhoneMapping] Exception:', e.message);
   }
@@ -516,7 +524,8 @@ function initUserBot() {
     try {
       const { createSupabaseClient } = require('../db/supabase');
       const db = createSupabaseClient();
-      const variants = [phone, phone.replace(/^\+/, ''), '+' + phone.replace(/^\+/, '')];
+      const phoneWithPlus = phone.startsWith('+') ? phone : '+' + phone;
+      const variants = [phoneWithPlus, phoneWithPlus.replace(/^\+/, ''), phone];
       const { data: orders } = await db
         .from('orders')
         .select('id')

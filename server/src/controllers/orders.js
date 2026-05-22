@@ -48,6 +48,10 @@ exports.createOrder = async (req, res) => {
       return res.status(400).json({ error: 'Заполните все обязательные поля' });
     }
 
+    // Normalize phone number for consistency
+    const normalizedPhone = customer_phone.replace(/[^\d+]/g, '');
+    const phoneWithPlus = normalizedPhone.startsWith('+') ? normalizedPhone : '+' + normalizedPhone;
+
     if (!receiptFile) {
       return res.status(400).json({ error: 'Загрузите чек оплаты' });
     }
@@ -163,21 +167,19 @@ exports.createOrder = async (req, res) => {
 
     // Try to resolve customer_telegram to chat_id if customer_chat_id is not provided
     let finalChatId = customer_chat_id ? Number(customer_chat_id) : null;
-    if (!finalChatId && customer_telegram) {
-      console.log('[createOrder] customer_chat_id missing, trying to resolve from telegram username:', customer_telegram);
+    if (!finalChatId) {
+      console.log('[createOrder] customer_chat_id missing, trying to resolve from phone/username');
       try {
-        // Try to find in shops table by phone (if customer is also a shop)
-        const { data: shop } = await getClient()
-          .from('shops')
-          .select('telegram_chat_id')
-          .eq('phone', customer_phone)
-          .maybeSingle();
-        if (shop?.telegram_chat_id) {
-          finalChatId = shop.telegram_chat_id;
-          console.log('[createOrder] Found chat_id from shops table:', finalChatId);
+        const { resolveChatId } = require('../services/telegram');
+        finalChatId = await resolveChatId({
+          phone: phoneWithPlus,
+          username: customer_telegram,
+        });
+        if (finalChatId) {
+          console.log('[createOrder] Resolved chat_id:', finalChatId);
         }
       } catch (e) {
-        console.log('[createOrder] Error resolving telegram username:', e.message);
+        console.log('[createOrder] Error resolving chat_id:', e.message);
       }
     }
 
@@ -185,7 +187,7 @@ exports.createOrder = async (req, res) => {
       .from('orders')
       .insert({
         customer_name: customer_name || null,
-        customer_phone,
+        customer_phone: phoneWithPlus,
         customer_address,
         delivery_type,
         delivery_payer: final_delivery_payer,
