@@ -50,7 +50,7 @@ exports.createInquiry = async (req, res) => {
       note:              note              || null,
     });
 
-    res.status(201).json({ id: data.id, message: 'Заявка отправлена! Мы свяжемся с вами.', inq_key: inqKey });({ id: data.id, message: 'Заявка отправлена! Мы свяжемся с вами.' });
+    res.status(201).json({ id: data.id, message: 'Заявка отправлена! Мы свяжемся с вами.', inq_key: inqKey });
   } catch(e) { res.status(500).json({ error: e.message }); }
 };
 
