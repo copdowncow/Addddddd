@@ -106,6 +106,9 @@ function getCatalogParams() {
 
 export async function loadConfig() {
   try { _cfg = await api.config(); } catch {}
+  try {
+    if (typeof window.linkTelegramCustomer === 'function') await window.linkTelegramCustomer();
+  } catch (_) {}
 }
 
 // ── CATALOG ───────────────────────────────────────────────

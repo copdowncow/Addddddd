@@ -186,6 +186,116 @@ function getMiniAppUrl() {
   return url;
 }
 
+function getBotUsername() {
+  return (process.env.BOT_USERNAME || 'ReBuketTj_Bot').replace(/^@/, '').trim();
+}
+
+function formatTelegramHandle(username) {
+  if (!username) return null;
+  const u = username.toString().trim();
+  if (!u) return null;
+  return u.startsWith('@') ? u : '@' + u;
+}
+
+// Сохранить chat_id клиента (Mini App /start / контакт) и привязать к заказу
+async function registerCustomerFromTelegram({ chatId, username, phone, orderId }) {
+  if (!chatId) return null;
+  const cid = Number(chatId);
+  const normUser = username ? normalizeUsername(username) : null;
+  if (normUser) {
+    usernameToChatId.set(normUser, cid);
+    await saveUsernameMapping(normUser, cid);
+  }
+  if (phone) await savePhoneMapping(phone, cid, normUser);
+  if (orderId) await patchOrderChatId(orderId, cid);
+  return cid;
+}
+
+async function trySendToCustomer(chatId, text, options = {}) {
+  if (!userBot && !ensureUserBot()) return { ok: false, reason: 'no_bot', error: 'userBot unavailable' };
+  if (!chatId) return { ok: false, reason: 'no_chat_id' };
+  try {
+    await userBot.sendMessage(Number(chatId), text, { parse_mode: 'HTML', ...options });
+    return { ok: true, chatId: Number(chatId) };
+  } catch (e) {
+    const err = e.message || String(e);
+    const needsStart = /403|blocked|initiate|chat not found|user is deactivated|PEER_ID_INVALID/i.test(err);
+    console.error('[trySendToCustomer] Failed:', chatId, err);
+    return { ok: false, reason: needsStart ? 'needs_start' : 'send_failed', error: err, needsStart };
+  }
+}
+
+function buildAdminUnreachableWarning(order, result) {
+  const botUser = getBotUsername();
+  const tg = formatTelegramHandle(order.customer_telegram) || 'не указан';
+  const deepLink = `https://t.me/${botUser}?start=order_${order.id}`;
+  let why = 'Клиент не привязан к боту.';
+  if (result?.reason === 'needs_start') {
+    why = 'У клиента есть chat_id, но он не нажал «Start» в боте — Telegram не даёт писать первым.';
+  } else if (result?.reason === 'no_chat_id') {
+    why = 'Клиент не открыл заказ через Telegram Mini App и не писал /start боту.';
+  } else if (result?.error) {
+    why = `Ошибка отправки: ${result.error}`;
+  }
+
+  return (
+    `⚠️ <b>КЛИЕНТ НЕ ПОЛУЧИТ УВЕДОМЛЕНИЕ</b>\n\n` +
+    `📦 Заказ #${order.id}\n` +
+    `📞 Телефон: ${escHtml(order.customer_phone || '—')}\n\n` +
+    `📱 Telegram: ${escHtml(tg)}\n` +
+    `💰 Сумма: ${(Number(order.total) || 0).toLocaleString('ru')} сом\n\n` +
+    `❌ <b>Проблема:</b> ${escHtml(why)}\n\n` +
+    `📋 <b>Что делать:</b>\n` +
+    `1. Позвоните клиенту: ${escHtml(order.customer_phone || '—')}\n` +
+    `2. Отправьте ссылку (клиент должен нажать Start):\n` +
+    `<a href="${deepLink}">${deepLink}</a>\n` +
+    `3. Сообщите: «Оплата подтверждена, магазин начинает сборку»\n\n` +
+    `💡 Заказы оформляйте через Mini App бота @${botUser} — тогда уведомления приходят автоматически.`
+  );
+}
+
+async function notifyAdminCustomerUnreachable(order, result) {
+  if (!adminBot || !adminChatIds.size) return;
+  if (!shouldSendNotification(order.id, 'admin_customer_unreachable')) return;
+  const text = buildAdminUnreachableWarning(order, result);
+  for (const chatId of adminChatIds) {
+    try {
+      await adminBot.sendMessage(chatId, text, { parse_mode: 'HTML', disable_web_page_preview: true });
+    } catch (e) {
+      console.error('[notifyAdminCustomerUnreachable]', chatId, e.message);
+    }
+  }
+}
+
+async function sendCustomerPaymentNotification(order) {
+  if (!order?.id) return { ok: false, reason: 'no_order' };
+  if (!shouldSendNotification(order.id, 'customer_payment_confirmed')) {
+    return { ok: true, skipped: true };
+  }
+
+  const chatId = await resolveCustomerChatId(order);
+  if (!chatId) return { ok: false, reason: 'no_chat_id' };
+
+  const text =
+    `✅ <b>Чек подтверждён!</b>\n\n` +
+    `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
+    `Магазин получил уведомление и начинает сборку.\n\n` +
+    `💰 Сумма: ${(Number(order.total) || 0).toLocaleString('ru')} сом\n\n` +
+    `💬 <b>Чат с магазином открыт.</b>\nПишите сообщения сюда — они передаются магазину анонимно.\n\n` +
+    `<i>/endchat — выйти из чата</i>`;
+
+  const result = await trySendToCustomer(chatId, text);
+  if (result.ok) {
+    try {
+      await Chat.setActiveChat(chatId, 'customer', order.id, null);
+    } catch (e) {
+      console.error('[sendCustomerPaymentNotification] setActiveChat:', e.message);
+    }
+    console.log('[sendCustomerPaymentNotification] Sent to:', chatId);
+  }
+  return result;
+}
+
 // Lazily create userBot if it was not started (e.g. missing token at startup)
 function ensureUserBot() {
   if (userBot) return true;
@@ -305,17 +415,32 @@ async function handleOrderCallback(callbackQuery) {
     }
 
     await adminBot.answerCallbackQuery(callbackQuery.id, { text: label, show_alert: false });
-    await adminBot.sendMessage(
-      callbackQuery.from.id,
-      `Заказ #${orderId} ${status === 'payment_confirmed' ? 'подтверждён (оплата)' : 'отклонён'}.\n\n📞 ${updatedOrder.customer_phone}\n💰 ${(Number(updatedOrder.total)||0).toLocaleString('ru')} сом.`,
-      { parse_mode: 'HTML' }
-    );
 
+    let customerNotify = null;
     if (status === 'payment_confirmed') {
-      try { await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
+      try { customerNotify = await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
       try { await notifySellerAboutOrder(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifySellerAboutOrder:', e.message); }
     } else if (status === 'rejected') {
       try { await notifyCustomerPaymentRejected(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentRejected:', e.message); }
+    }
+
+    if (shouldSendNotification(orderId, 'admin_confirm_followup:' + callbackQuery.from.id)) {
+      let followUp =
+        `Заказ #${orderId} ${status === 'payment_confirmed' ? 'подтверждён (оплата)' : 'отклонён'}.\n\n` +
+        `📞 ${updatedOrder.customer_phone}\n` +
+        `💰 ${(Number(updatedOrder.total) || 0).toLocaleString('ru')} сом.`;
+      if (status === 'payment_confirmed') {
+        if (customerNotify?.ok) {
+          followUp += '\n\n✅ <b>Клиенту отправлено уведомление в бот.</b>';
+        } else if (!customerNotify?.skipped) {
+          followUp += '\n\n' + buildAdminUnreachableWarning(updatedOrder, customerNotify || { reason: 'no_chat_id' });
+        }
+      }
+      try {
+        await adminBot.sendMessage(callbackQuery.from.id, followUp, { parse_mode: 'HTML', disable_web_page_preview: true });
+      } catch (e) {
+        console.error('[handleOrderCallback] admin followUp:', e.message);
+      }
     }
 
     if (callbackQuery.message) {
@@ -469,6 +594,45 @@ function initUserBot() {
     // Это позволяет найти заказы клиента даже без username
     // Запрос делается в фоне — не блокирует UX
 
+    if (param.startsWith('order_')) {
+      const orderId = param.slice(6).trim();
+      await registerCustomerFromTelegram({ chatId, username, orderId });
+      try {
+        const { createSupabaseClient } = require('../db/supabase');
+        const db = createSupabaseClient();
+        const { data: order } = await db.from('orders').select('*').eq('id', orderId).maybeSingle();
+        if (!order) {
+          await userBot.sendMessage(chatId, `❌ Заказ <b>#${orderId}</b> не найден.`, { parse_mode: 'HTML' });
+          return;
+        }
+        await db.from('orders').update({ customer_chat_id: chatId }).eq('id', orderId);
+        if (['payment_confirmed', 'seller_accepted', 'preparing', 'ready', 'delivered'].includes(order.status)) {
+          const fresh = { ...order, customer_chat_id: chatId };
+          const sent = await sendCustomerPaymentNotification(fresh);
+          if (sent.ok) {
+            await userBot.sendMessage(chatId,
+              `✅ <b>Уведомления подключены!</b>\n\nЗаказ <b>#${orderId}</b> — вы будете получать сообщения о статусе сюда.`,
+              { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
+            );
+          } else {
+            await userBot.sendMessage(chatId,
+              `✅ Аккаунт привязан к заказу <b>#${orderId}</b>.\n\nМы сообщим о статусе, когда оплата будет подтверждена.`,
+              { parse_mode: 'HTML' }
+            );
+          }
+        } else {
+          await userBot.sendMessage(chatId,
+            `✅ <b>Аккаунт привязан к заказу #${orderId}</b>\n\nОжидайте подтверждения оплаты администратором.`,
+            { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
+          );
+        }
+      } catch (e) {
+        console.error('[/start order_]', e.message);
+        await userBot.sendMessage(chatId, '❌ Ошибка привязки заказа. Напишите @rebuket_admin.');
+      }
+      return;
+    }
+
     if (param === 'inquiry' || param.startsWith('inq_')) {
       const adminHandle = (process.env.ADMIN_TELEGRAM || 'https://t.me/Rebuket_admin')
         .replace('https://t.me/', '').replace('@', '').trim();
@@ -534,6 +698,10 @@ function initUserBot() {
       if (orders?.length) {
         for (const o of orders) {
           await db.from('orders').update({ customer_chat_id: chatId }).eq('id', o.id);
+          const { data: full } = await db.from('orders').select('*').eq('id', o.id).maybeSingle();
+          if (full?.status === 'payment_confirmed') {
+            try { await sendCustomerPaymentNotification({ ...full, customer_chat_id: chatId }); } catch (_) {}
+          }
         }
         console.log('[contact] Patched', orders.length, 'existing orders with chat_id:', chatId);
       }
@@ -1727,20 +1895,11 @@ async function activateOrderChatFlow(order) {
     } catch (e) { console.error('[activateOrderChatFlow] shops:', e.message); }
   }
 
-  // Only send customer notification if not already sent recently
-  if (customerChatId && userBot && shouldSendNotification(order.id, 'customer_payment_confirmed')) {
-    try {
-      await userBot.sendMessage(customerChatId,
-        `✅ <b>Чек подтверждён!</b>\n\n` +
-        `Ваш заказ <b>#${order.id}</b> принят администратором.\n` +
-        `Магазин получил уведомление и начинает сборку.\n\n` +
-        `💰 Сумма: ${(Number(order.total)||0).toLocaleString('ru')} сом\n\n` +
-        `💬 <b>Чат с магазином открыт.</b>\nПишите сообщения сюда — они передаются магазину анонимно.\n\n` +
-        `<i>/endchat — выйти из чата</i>`,
-        { parse_mode: 'HTML' }
-      );
-    } catch (e) { console.error('[activateOrderChatFlow] customer notify:', e.message); }
+  const notifyResult = await sendCustomerPaymentNotification(order);
+  if (!notifyResult.ok && !notifyResult.skipped) {
+    await notifyAdminCustomerUnreachable(order, notifyResult);
   }
+  return notifyResult;
 }
 
 async function relayShopToCustomer(order, msg) {
@@ -1839,6 +1998,8 @@ module.exports = {
   getPendingInquiry,
   // Новые утилиты для использования в других модулях:
   resolveChatId,
+  registerCustomerFromTelegram,
+  sendCustomerPaymentNotification,
   savePhoneMapping,
   saveUsernameMapping,
   getChatIdByUsername,

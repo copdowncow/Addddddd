@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#22A05B">
 <title>ReBuket.tj — Букеты и сладости</title>
 <meta name="description" content="ReBuket.tj — маркетплейс букетов, корзин, мишек и сладостей в Таджикистане">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -2134,6 +2135,7 @@ window.cartCheckout = () => {
   document.getElementById('checkout-modal').classList.add('open');
   resetCheckoutForm();
   prefillCheckoutForm();
+  window.linkTelegramCustomer?.().catch(() => {});
   updateDeliveryTimeLabel();
 };
 
@@ -2160,6 +2162,24 @@ window.prefillCheckoutForm = () => {
   if (fullName && !nameEl.value.trim()) {
     nameEl.value = fullName;
   }
+};
+
+window.linkTelegramCustomer = async (phone) => {
+  try {
+    const tg = window.Telegram?.WebApp;
+    const u = tg?.initDataUnsafe?.user;
+    if (!u?.id) return;
+    tg?.ready?.();
+    await fetch('/api/telegram/link-customer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: u.id,
+        username: u.username ? '@' + u.username : null,
+        phone: phone || document.getElementById('checkout-phone')?.value?.trim() || null,
+      }),
+    });
+  } catch (_) {}
 };
 
 window.toggleAnotherPerson = () => {
@@ -2421,10 +2441,11 @@ window.completeCheckout = async () => {
   fd.append('items', JSON.stringify(window._cart));
   fd.append('receipt', receiptFile);
 
-  // Telegram chat_id, чтобы бот мог писать клиенту о статусе
+  // Telegram: chat_id + username для уведомлений бота
   try {
-    const tgUid = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
-    if (tgUid) fd.append('customer_chat_id', String(tgUid));
+    const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+    if (tgUser?.id) fd.append('customer_chat_id', String(tgUser.id));
+    if (tgUser?.username) fd.append('customer_telegram', '@' + tgUser.username);
   } catch(_) {}
   
   // Fast order and delivery time
@@ -2738,6 +2759,7 @@ window.addEventListener('scroll', () => {
 ══════════════════════════════════════ */
 updateCartUI();
 await loadConfig();
+try { await window.linkTelegramCustomer(); } catch (_) {}
 await loadCounts();
 loadCities('f-city');
 if (window.refreshShopProfileUI) window.refreshShopProfileUI();

@@ -114,6 +114,8 @@ router.get('/admin/earnings',     adminAuth, E.getEarnings);
 router.get('/admin/settings',     adminAuth, E.getSettings);
 router.patch('/admin/settings',   adminAuth, E.updateSettings);
 router.get('/platform-settings',             E.getPublicSettings);
+const TelegramLink = require('./controllers/telegram_link');
+router.post('/telegram/link-customer', TelegramLink.linkCustomer);
 router.get('/config',            (req, res) => res.json({
   instagram:    process.env.ADMIN_INSTAGRAM || 'https://instagram.com/rebuket',
   telegram:     process.env.ADMIN_TELEGRAM  || 'https://t.me/rebuket_admin',

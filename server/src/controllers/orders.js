@@ -165,6 +165,12 @@ exports.createOrder = async (req, res) => {
     const processed = await processImage(receiptFile);
     const receipt_url = await uploadPhoto(processed, `receipt-${Date.now()}.jpg`, 'image/jpeg');
 
+    const customerTelegram = customer_telegram
+      ? (customer_telegram.toString().trim().startsWith('@')
+          ? customer_telegram.toString().trim()
+          : '@' + customer_telegram.toString().trim())
+      : null;
+
     // Try to resolve customer_telegram to chat_id if customer_chat_id is not provided
     let finalChatId = customer_chat_id ? Number(customer_chat_id) : null;
     if (!finalChatId) {
@@ -173,7 +179,7 @@ exports.createOrder = async (req, res) => {
         const { resolveChatId } = require('../services/telegram');
         finalChatId = await resolveChatId({
           phone: phoneWithPlus,
-          username: customer_telegram,
+          username: customerTelegram,
         });
         if (finalChatId) {
           console.log('[createOrder] Resolved chat_id:', finalChatId);
@@ -203,7 +209,7 @@ exports.createOrder = async (req, res) => {
         receiver_phone: receiver_phone || null,
         receiver_address: receiver_address || null,
         customer_chat_id: finalChatId,
-        customer_telegram: customer_telegram || null,
+        customer_telegram: customerTelegram,
         fast_order: fast_order === 'true',
         delivery_time: delivery_time || null,
         status: 'pending',
@@ -212,6 +218,20 @@ exports.createOrder = async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    if (finalChatId || customerTelegram) {
+      try {
+        const { registerCustomerFromTelegram } = require('../services/telegram');
+        await registerCustomerFromTelegram({
+          chatId: finalChatId,
+          username: customerTelegram,
+          phone: phoneWithPlus,
+          orderId: data.id,
+        });
+      } catch (e) {
+        console.log('[createOrder] registerCustomerFromTelegram:', e.message);
+      }
+    }
 
     console.log('[createOrder] Order created, sending notification:', data.id);
 
