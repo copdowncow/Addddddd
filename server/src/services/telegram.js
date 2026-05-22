@@ -312,9 +312,8 @@ async function handleOrderCallback(callbackQuery) {
     );
 
     if (status === 'payment_confirmed') {
-      // Уведомляем клиента и включаем чат-логику
+      // Уведомляем клиента, но realtime-чат отключён
       try { await notifyCustomerPaymentConfirmed(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentConfirmed:', e.message); }
-      try { await activateOrderChatFlow(updatedOrder); } catch (e) { console.error('[handleOrderCallback] activateOrderChatFlow:', e.message); }
     } else if (status === 'rejected') {
       try { await notifyCustomerPaymentRejected(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomerPaymentRejected:', e.message); }
     }
@@ -578,18 +577,7 @@ function initUserBot() {
     );
   });
 
-  userBot.onText(/\/endchat/, async (msg) => {
-    try {
-      const sess = await Chat.getActiveChat(msg.chat.id);
-      if (sess) {
-        await Chat.clearActiveChat(msg.chat.id);
-        await userBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу.');
-      } else {
-        await userBot.sendMessage(msg.chat.id, 'Активного чата нет.');
-      }
-    } catch (_) {}
-  });
-
+  // realtime customer <-> shop chat removed; bot no longer relays chat messages.
   userBot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return;
     if (customerPendingRefundReason.has(msg.chat.id)) return;
@@ -1063,18 +1051,7 @@ function initShopBot() {
     await handlePhoneInput(chatId, phone);
   });
 
-  shopBot.onText(/\/endchat/, async (msg) => {
-    try {
-      const sess = await Chat.getActiveChat(msg.chat.id);
-      if (sess) {
-        await Chat.clearActiveChat(msg.chat.id);
-        await shopBot.sendMessage(msg.chat.id, '✅ Вы вышли из чата по заказу.');
-      } else {
-        await shopBot.sendMessage(msg.chat.id, 'Активного чата нет.');
-      }
-    } catch (_) {}
-  });
-
+  // realtime customer <-> shop chat removed; shop bot no longer relays chat messages.
   shopBot.on('message', async (msg) => {
     if (!msg.text) return;
     if (msg.text.startsWith('/')) return;
