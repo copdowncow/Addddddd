@@ -1531,16 +1531,13 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         
         <div class="form-group">
           <label id="delivery-time-label">Желаемое время доставки</label>
-          <select id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
-            <option value="">Выберите время</option>
-            <option value="1 час">1 час</option>
-            <option value="2 часа">2 часа</option>
-            <option value="3 часа">3 часа</option>
-            <option value="4 часа">4 часа</option>
-            <option value="5 часов">5 часов</option>
-            <option value="6 часов">6 часов</option>
-            <option value="Завтра утром">Завтра утром</option>
-          </select>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <input type="date" id="checkout-delivery-date" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+            <input type="time" id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+          </div>
+          <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:8px">
+            Дата и время по GMT+5 (Душанбе). Нельзя выбрать прошедшую дату и время.
+          </small>
         </div>
       </div>
       
@@ -2206,6 +2203,18 @@ window.setCheckoutStep = (step) => {
 
 window.saveCheckoutStep1 = () => {
   const anotherPerson = document.getElementById('checkout-another-person').checked;
+  const deliveryDate = document.getElementById('checkout-delivery-date').value.trim();
+  const deliveryTimeValue = document.getElementById('checkout-delivery-time').value.trim();
+  let deliveryTime = '';
+
+  if (deliveryDate || deliveryTimeValue) {
+    if (deliveryDate && deliveryTimeValue) {
+      deliveryTime = formatCheckoutDeliveryDateTime(deliveryDate, deliveryTimeValue);
+    } else {
+      deliveryTime = '';
+    }
+  }
+
   window._checkoutForm = {
     name: document.getElementById('checkout-name').value.trim(),
     phone: document.getElementById('checkout-phone').value.trim(),
@@ -2216,7 +2225,9 @@ window.saveCheckoutStep1 = () => {
     receiverPhone: anotherPerson ? document.getElementById('checkout-receiver-phone').value.trim() : '',
     receiverAddress: anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : '',
     fastOrder: document.getElementById('checkout-fast-order').checked,
-    deliveryTime: document.getElementById('checkout-delivery-time').value.trim(),
+    deliveryDate,
+    deliveryTimeValue,
+    deliveryTime,
   };
   return window._checkoutForm;
 };
@@ -2245,6 +2256,48 @@ window.updateDeliveryTimeLabel = () => {
     labelEl.textContent = 'Желаемое время доставки';
   }
 };
+
+function getDushanbeNow() {
+  const local = new Date();
+  return new Date(local.getTime() + (local.getTimezoneOffset() + 300) * 60000);
+}
+
+function getDushanbeMinDate() {
+  const d = getDushanbeNow();
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function setCheckoutDeliveryDateMin() {
+  const dateEl = document.getElementById('checkout-delivery-date');
+  if (!dateEl) return;
+  const minDate = getDushanbeMinDate();
+  dateEl.min = minDate;
+  if (dateEl.value && dateEl.value < minDate) {
+    dateEl.value = minDate;
+  }
+}
+
+function parseCheckoutDeliveryDateTime(dateValue, timeValue) {
+  if (!dateValue || !timeValue) return null;
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const [hour, minute] = timeValue.split(':').map(Number);
+  if (![year, month, day, hour, minute].every(n => Number.isFinite(n))) return null;
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute));
+}
+
+function formatCheckoutDeliveryDateTime(dateValue, timeValue) {
+  const [year, month, day] = dateValue.split('-');
+  const [hour, minute] = timeValue.split(':');
+  return `${day}.${month}.${year} ${hour.padStart(2, '0')}:${minute.padStart(2, '0')} GMT+5`;
+}
+
+function isCheckoutDeliveryDateTimeValid(dateValue, timeValue) {
+  const selected = parseCheckoutDeliveryDateTime(dateValue, timeValue);
+  return selected && selected.getTime() > Date.now();
+}
 
 window.prefillCheckoutForm = () => {
   const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -2298,6 +2351,17 @@ window.goToCheckoutStep2 = () => {
   if (data.anotherPerson && (!data.receiverName || !data.receiverPhone || !data.receiverAddress)) {
     if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните данные получателя'; }
     return;
+  }
+
+  if (data.deliveryDate || data.deliveryTimeValue) {
+    if (!data.deliveryDate || !data.deliveryTimeValue) {
+      if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Выберите дату и время доставки'; }
+      return;
+    }
+    if (!isCheckoutDeliveryDateTimeValid(data.deliveryDate, data.deliveryTimeValue)) {
+      if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Выберите будущее время доставки по GMT+5'; }
+      return;
+    }
   }
 
   if (msgEl) msgEl.textContent = '';
@@ -2469,7 +2533,9 @@ window.resetCheckoutForm = () => {
   setCheckoutInput('checkout-receiver-phone', '');
   setCheckoutInput('checkout-receiver-address', '');
   setCheckoutInput('checkout-fast-order', false);
+  setCheckoutInput('checkout-delivery-date', '');
   setCheckoutInput('checkout-delivery-time', '');
+  setCheckoutDeliveryDateMin();
   window._checkoutForm = null;
   window._checkoutBusy = false;
   setCheckoutStep(1);
