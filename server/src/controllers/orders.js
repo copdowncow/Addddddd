@@ -332,9 +332,14 @@ exports.updateOrderStatus = async (req, res) => {
     // Backward compat: 'confirmed' from admin = payment_confirmed (notifies seller)
     const newStatus = status === 'confirmed' ? 'payment_confirmed' : status;
 
+    const statusPayload = { status: newStatus };
+    if (newStatus === 'payment_confirmed') {
+      statusPayload.payment_confirmed_at = new Date().toISOString();
+    }
+
     let query = getClient()
       .from('orders')
-      .update({ status: newStatus })
+      .update(statusPayload)
       .eq('id', id);
 
     if (newStatus === 'payment_confirmed' || newStatus === 'rejected') {

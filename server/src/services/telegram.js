@@ -480,12 +480,12 @@ function buildAdminUnreachableWarning(order, result) {
   return (
     `⚠️ <b>КЛИЕНТ НЕ ПОЛУЧИТ УВЕДОМЛЕНИЕ</b>\n\n` +
     `📦 Заказ #${order.id}\n` +
-    `📞 Телефон: ${escHtml(order.customer_phone || '—')}\n\n` +
+    `📞 Телефон: ${escHtml(phoneDisplay(order.customer_phone))}\n\n` +
     `📱 Telegram: ${escHtml(tg)}\n` +
     `💰 Сумма: ${(Number(order.total) || 0).toLocaleString('ru')} сом\n\n` +
     `❌ <b>Проблема:</b> ${escHtml(why)}\n\n` +
     `📋 <b>Что делать:</b>\n` +
-    `1. Позвоните клиенту: ${escHtml(order.customer_phone || '—')}\n` +
+    `1. Позвоните клиенту: ${escHtml(phoneDisplay(order.customer_phone))}\n` +
     `2. Отправьте ссылку (клиент должен нажать Start):\n` +
     `<a href="${deepLink}">${deepLink}</a>\n` +
     `3. Сообщите: «Оплата подтверждена, магазин начинает сборку»\n\n` +
@@ -552,6 +552,13 @@ function ensureShopBot() {
   return !!shopBot;
 }
 
+/** Телефон для показа в сообщениях (без «+» в начале) */
+function phoneDisplay(phone) {
+  const s = String(phone || '').trim();
+  if (!s) return '—';
+  return s.replace(/^\+/, '');
+}
+
 function phoneDigits(phone) {
   let d = (phone || '').toString().replace(/\D/g, '');
   if (!d) return '';
@@ -577,6 +584,20 @@ function phoneVariants(phone) {
 
 function getShopBotUsername() {
   return (process.env.SHOP_BOT_USERNAME || process.env.BOT_USERNAME_SHOP || 'ReBuket_Shop_bot').replace(/^@/, '').trim();
+}
+
+const SHOP_REMINDER_MS =
+  (Number(process.env.SHOP_ORDER_REMINDER_MINUTES) || 5) * 60 * 1000;
+const SHOP_REJECT_MS =
+  (Number(process.env.SHOP_ORDER_TIMEOUT_MINUTES) || 10) * 60 * 1000;
+const SHOP_RESPONSE_TIMEOUT_MS = SHOP_REJECT_MS;
+const SHOP_TIMEOUT_POLL_MS = 60 * 1000;
+const SHOP_TIMEOUT_WAIT_STATUSES = ['payment_confirmed', 'confirmed'];
+
+function shopWaitStartedAt(order) {
+  const t = order.payment_confirmed_at || order.updated_at;
+  const ms = t ? new Date(t).getTime() : 0;
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 async function findShopsBySellerPhones(sellerPhones) {
@@ -619,7 +640,7 @@ async function notifyAdminShopsNotLinked(order, { noBot = [], noChatId = [] }) {
   if (noChatId.length) {
     text += `<b>Не подключены к боту</b> (нужен /start в @${shopBotUser}):\n`;
     for (const s of noChatId) {
-      text += `• ${escHtml(s.shop_name || s.phone)} — 📞 ${escHtml(s.phone)}\n`;
+      text += `• ${escHtml(s.shop_name || phoneDisplay(s.phone))} — 📞 ${escHtml(phoneDisplay(s.phone))}\n`;
     }
     text += `\n👉 Магазин: открыть @${shopBotUser} → /start → телефон → пароль\n`;
   }
@@ -671,7 +692,7 @@ async function notifyAdminAboutOrder(order) {
 
   let message = `🛒 <b>НОВЫЙ ЗАКАЗ #${order.id}</b>\n\n`;
   if (order.customer_name) message += `👤 Имя: ${order.customer_name}\n`;
-  message += `📞 Телефон: ${order.customer_phone}\n`;
+  message += `📞 Телефон: ${escHtml(phoneDisplay(order.customer_phone))}\n`;
   message += `📍 Адрес: ${order.customer_address}\n`;
   message += `🚚 ${deliveryLabel}${payerNote}\n`;
   if (order.subtotal != null) {
@@ -688,7 +709,7 @@ async function notifyAdminAboutOrder(order) {
   if (order.receiver_name) {
     message += `\n👤 <b>Получит другой человек:</b>\n`;
     message += `Имя: ${order.receiver_name}\n`;
-    message += `Телефон: ${order.receiver_phone}\n`;
+    message += `Телефон: ${escHtml(phoneDisplay(order.receiver_phone))}\n`;
     message += `Адрес: ${order.receiver_address}\n`;
   }
   message += `\n🔗 <a href="${adminUrl}">Открыть в админ-панели</a>`;
@@ -741,9 +762,13 @@ async function handleOrderCallback(callbackQuery) {
     const db = createSupabaseClient();
 
     // Обновляем только из pending — защита от повторных нажатий и дублей
+    const confirmPayload = { status };
+    if (status === 'payment_confirmed') {
+      confirmPayload.payment_confirmed_at = new Date().toISOString();
+    }
     const { data: updatedOrder, error } = await db
       .from('orders')
-      .update({ status })
+      .update(confirmPayload)
       .eq('id', orderId)
       .eq('status', 'pending')
       .select()
@@ -784,7 +809,7 @@ async function handleOrderCallback(callbackQuery) {
     if (shouldSendNotification(orderId, 'admin_confirm_followup:' + callbackQuery.from.id)) {
       let followUp =
         `Заказ #${orderId} ${status === 'payment_confirmed' ? 'подтверждён (оплата)' : 'отклонён'}.\n\n` +
-        `📞 ${updatedOrder.customer_phone}\n` +
+        `📞 ${escHtml(phoneDisplay(updatedOrder.customer_phone))}\n` +
         `💰 ${(Number(updatedOrder.total) || 0).toLocaleString('ru')} сом.`;
       if (status === 'payment_confirmed') {
         if (customerNotify?.ok) {
@@ -858,7 +883,10 @@ async function notifySellerAboutOrder(order) {
     `🚚 <b>Доставка:</b> ${order.delivery_type || '—'}\n`;
   if (order.fast_order) message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
   if (order.delivery_time) message += `⏰ Желаемое время: ${order.delivery_time}\n`;
-  message += `\n⏳ Контакты клиента откроются после того, как вы примете заказ.`;
+  const rejectMins = Math.round(SHOP_REJECT_MS / 60000);
+  const remindMins = Math.round(SHOP_REMINDER_MS / 60000);
+  message += `\n⏳ Контакты клиента откроются после принятия заказа.\n`;
+  message += `⏱ Ответьте в течение <b>${rejectMins} мин.</b> (напоминание через ${remindMins} мин., иначе заказ отменится).`;
 
   const keyboard = {
     inline_keyboard: [[
@@ -901,10 +929,10 @@ async function notifyAdminAboutShopOrder(order, shop) {
 
   let message = `🏪 <b>РЕШЕНИЕ МАГАЗИНА</b>\n\n`;
   message += `<b>Имя магазина:</b> ${shopName}\n`;
-  message += `<b>Номер:</b> ${shop.phone}\n`;
+  message += `<b>Номер:</b> ${escHtml(phoneDisplay(shop.phone))}\n`;
   message += `<b>Действие:</b> ${action}\n\n`;
-  message += `<b>Заказчик:</b> ${order.customer_phone}\n`;
-  if (order.receiver_name) message += `<b>Получатель:</b> ${order.receiver_name} (${order.receiver_phone})\n`;
+  message += `<b>Заказчик:</b> ${escHtml(phoneDisplay(order.customer_phone))}\n`;
+  if (order.receiver_name) message += `<b>Получатель:</b> ${order.receiver_name} (${escHtml(phoneDisplay(order.receiver_phone))})\n`;
   message += `\n💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.`;
 
   for (const chatId of adminChatIds) {
@@ -1409,7 +1437,7 @@ async function notifyInquiry(inq, productTitle, productSlug, productId) {
     `🛒 <b>Новая заявка!</b>\n─────────────────\n` +
     `📦 ${escHtml(productTitle || '—')}\n` +
     `👤 ${escHtml(inq.customer_name || '—')}\n` +
-    `📞 <b>${escHtml(inq.customer_phone)}</b>\n` +
+    `📞 <b>${escHtml(phoneDisplay(inq.customer_phone))}</b>\n` +
     `✈️ ${escHtml(inq.customer_telegram || '—')}\n` +
     `📝 ${escHtml(inq.note || '—')}` +
     (url ? `\n🔗 <a href="${url}">Открыть объявление</a>` : ''),
@@ -1421,7 +1449,7 @@ async function notifyShopRegistration(shop) {
   await sendToAdmins(
     `🏪 <b>Новая заявка на регистрацию магазина!</b>\n─────────────────\n` +
     `👤 Название: <b>${escHtml(shop.shop_name || '—')}</b>\n` +
-    `📞 Телефон: <b>${escHtml(shop.phone)}</b>\n` +
+    `📞 Телефон: <b>${escHtml(phoneDisplay(shop.phone))}</b>\n` +
     `🕐 ${new Date().toLocaleString('ru')}`,
     {
       reply_markup: {
@@ -1438,7 +1466,7 @@ async function notifyShopApproved(shop) {
   if (!userBot || !shop.telegram_chat_id) return;
   try {
     await userBot.sendMessage(shop.telegram_chat_id,
-      `✅ <b>Ваш магазин одобрен!</b>\n\nТеперь вы можете войти как магазин и размещать объявления.\n\n📞 Телефон для входа: ${escHtml(shop.phone)}`,
+      `✅ <b>Ваш магазин одобрен!</b>\n\nТеперь вы можете войти как магазин и размещать объявления.\n\n📞 Телефон для входа: ${escHtml(phoneDisplay(shop.phone))}`,
       { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🏪 Открыть ReBuket', url: getMiniAppUrl() }]] } }
     );
   } catch(e) { console.log('notifyShopApproved error:', e.message); }
@@ -1673,7 +1701,7 @@ function initShopBot() {
       await db.from('shops').update({ telegram_chat_id: chatId }).eq('phone', shop.phone);
       shopAuthState.delete(chatId);
       await shopBot.sendMessage(chatId,
-        `✅ <b>${shop.shop_name || 'Магазин'}</b> успешно подключён!\n\nВы будете получать только свои заказы.\n\n📞 Телефон: ${shop.phone}\n• /logout — выйти`,
+        `✅ <b>${shop.shop_name || 'Магазин'}</b> успешно подключён!\n\nВы будете получать только свои заказы.\n\n📞 Телефон: ${escHtml(phoneDisplay(shop.phone))}\n• /logout — выйти`,
         { parse_mode: 'HTML' }
       );
       console.log('[shopBot] Authorized:', shop.phone, '→ chat_id:', chatId);
@@ -1863,7 +1891,7 @@ function initShopBot() {
 
       let reply = `<b>${labels[newStatus] || newStatus}</b>\nЗаказ #${orderId}\n`;
       if (newStatus === 'seller_accepted') {
-        reply += `\n📞 Клиент: <b>${updated.customer_phone}</b>\n🏠 Адрес: ${updated.customer_address}`;
+        reply += `\n📞 Клиент: <b>${escHtml(phoneDisplay(updated.customer_phone))}</b>\n🏠 Адрес: ${updated.customer_address}`;
       }
       const nextKb = [];
       if (newStatus === 'seller_accepted') nextKb.push([{ text: '👨‍🍳 Готовим', callback_data: `shop_preparing:${orderId}` }]);
@@ -2275,13 +2303,8 @@ function registerCustomerOrderHandlers() {
 }
 
 // ─────────────────────────────────────────────
-// ⏱ Автоотклонение, если магазин не ответил за 10 мин
+// ⏱ Напоминание магазину (5 мин) и автоотклонение (10 мин)
 // ─────────────────────────────────────────────
-const SHOP_RESPONSE_TIMEOUT_MS =
-  (Number(process.env.SHOP_ORDER_TIMEOUT_MINUTES) || 10) * 60 * 1000;
-const SHOP_TIMEOUT_POLL_MS = 60 * 1000;
-const SHOP_TIMEOUT_WAIT_STATUSES = ['payment_confirmed', 'confirmed'];
-
 async function notifyCustomerShopTimeoutRejected(order) {
   if (!userBot && !ensureUserBot()) return;
   const dedupType = 'customer_shop_timeout_reject';
@@ -2315,7 +2338,7 @@ async function notifyAdminShopTimeoutRejected(order) {
   const text =
     `⏱ <b>АВТООТКЛОНЕНИЕ ЗАКАЗА #${order.id}</b>\n\n` +
     `Магазин не ответил за ${mins} мин. (ожидание принятия/отклонения).\n` +
-    `📞 ${escHtml(order.customer_phone || '—')}\n` +
+    `📞 ${escHtml(phoneDisplay(order.customer_phone))}\n` +
     `💰 ${(Number(order.total) || 0).toLocaleString('ru')} сом`;
 
   for (const chatId of adminChatIds) {
@@ -2323,6 +2346,61 @@ async function notifyAdminShopTimeoutRejected(order) {
       await adminBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
     } catch (e) {
       console.log('[notifyAdminShopTimeoutRejected]', chatId, e.message);
+    }
+  }
+}
+
+async function notifyShopsShopReminder(order) {
+  if (!shopBot && !ensureShopBot()) return;
+
+  let items = [];
+  if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch (_) { items = []; } }
+  else if (Array.isArray(order.items)) items = order.items;
+
+  const sellerPhones = [...new Set(items.map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
+  if (!sellerPhones.length) return;
+
+  const shops = await findShopsBySellerPhones(sellerPhones);
+  const leftMins = Math.max(1, Math.round((SHOP_REJECT_MS - SHOP_REMINDER_MS) / 60000));
+  const text =
+    `⏰ <b>Напоминание: заказ #${order.id}</b>\n\n` +
+    `Прошло ${Math.round(SHOP_REMINDER_MS / 60000)} мин. — примите или отклоните заказ.\n` +
+    `Через <b>${leftMins} мин.</b> заказ будет отменён автоматически.`;
+
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '✅ Принять заказ', callback_data: `shop_accept:${order.id}` },
+      { text: '❌ Отклонить', callback_data: `shop_reject:${order.id}` },
+    ]],
+  };
+
+  for (const shop of shops) {
+    if (!shop.telegram_chat_id) continue;
+    const key = `shop_reminder:${phoneDigits(shop.phone)}`;
+    if (!canSendNotification(order.id, key)) continue;
+    try {
+      await shopBot.sendMessage(shop.telegram_chat_id, text, { parse_mode: 'HTML', reply_markup: keyboard });
+      markNotificationSent(order.id, key);
+      console.log('[notifyShopsShopReminder] order', order.id, 'shop', shop.phone);
+    } catch (e) {
+      console.log('[notifyShopsShopReminder]', shop.phone, e.message);
+    }
+  }
+}
+
+async function notifyAdminShopReminder(order) {
+  if (!adminBot) return;
+  const text =
+    `⏰ <b>Напоминание: заказ #${order.id}</b>\n\n` +
+    `Магазин не ответил ${Math.round(SHOP_REMINDER_MS / 60000)} мин. после подтверждения оплаты.\n` +
+    `📞 ${escHtml(phoneDisplay(order.customer_phone))}`;
+  for (const chatId of adminChatIds) {
+    if (!canSendNotification(order.id, `admin_shop_reminder:${chatId}`)) continue;
+    try {
+      await adminBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+      markNotificationSent(order.id, `admin_shop_reminder:${chatId}`);
+    } catch (e) {
+      console.log('[notifyAdminShopReminder]', chatId, e.message);
     }
   }
 }
@@ -2356,17 +2434,49 @@ async function notifyShopsShopTimeoutRejected(order) {
   }
 }
 
+async function autoRejectShopOrder(db, order) {
+  const mins = Math.round(SHOP_REJECT_MS / 60000);
+  const noteLine = `Автоотклонён: магазин не ответил за ${mins} мин.`;
+  const { data: updated, error: upErr } = await db
+    .from('orders')
+    .update({
+      status: 'rejected',
+      notes: order.notes ? `${order.notes}\n${noteLine}` : noteLine,
+    })
+    .eq('id', order.id)
+    .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
+    .select()
+    .single();
+
+  if (upErr) {
+    console.log('[processShopOrderTimeouts] update error:', order.id, upErr.message);
+    return null;
+  }
+  if (!updated) return null;
+
+  console.log('[processShopOrderTimeouts] Auto-rejected order', updated.id);
+  try { await notifyCustomerShopTimeoutRejected(updated); } catch (e) {
+    console.log('[processShopOrderTimeouts] customer notify:', e.message);
+  }
+  try { await notifyAdminShopTimeoutRejected(updated); } catch (e) {
+    console.log('[processShopOrderTimeouts] admin notify:', e.message);
+  }
+  try { await notifyShopsShopTimeoutRejected(updated); } catch (e) {
+    console.log('[processShopOrderTimeouts] shop notify:', e.message);
+  }
+  return updated;
+}
+
 async function processShopOrderTimeouts() {
   const { createSupabaseClient } = require('../db/supabase');
   const db = createSupabaseClient();
-  const cutoff = new Date(Date.now() - SHOP_RESPONSE_TIMEOUT_MS).toISOString();
+  const now = Date.now();
 
   const { data: orders, error } = await db
     .from('orders')
     .select('*')
     .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
-    .lt('updated_at', cutoff)
-    .limit(40);
+    .limit(80);
 
   if (error) {
     console.log('[processShopOrderTimeouts] query error:', error.message);
@@ -2374,47 +2484,35 @@ async function processShopOrderTimeouts() {
   }
   if (!orders?.length) return;
 
-  const mins = Math.round(SHOP_RESPONSE_TIMEOUT_MS / 60000);
-  const noteLine = `Автоотклонён: магазин не ответил за ${mins} мин.`;
-
   for (const order of orders) {
-    const { data: updated, error: upErr } = await db
-      .from('orders')
-      .update({
-        status: 'rejected',
-        notes: order.notes ? `${order.notes}\n${noteLine}` : noteLine,
-      })
-      .eq('id', order.id)
-      .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
-      .select()
-      .single();
+    const started = shopWaitStartedAt(order);
+    if (!started) continue;
+    const age = now - started;
 
-    if (upErr) {
-      console.log('[processShopOrderTimeouts] update error:', order.id, upErr.message);
+    if (age >= SHOP_REJECT_MS) {
+      await autoRejectShopOrder(db, order);
       continue;
     }
-    if (!updated) continue;
 
-    console.log('[processShopOrderTimeouts] Auto-rejected order', updated.id);
-    try { await notifyCustomerShopTimeoutRejected(updated); } catch (e) {
-      console.log('[processShopOrderTimeouts] customer notify:', e.message);
-    }
-    try { await notifyAdminShopTimeoutRejected(updated); } catch (e) {
-      console.log('[processShopOrderTimeouts] admin notify:', e.message);
-    }
-    try { await notifyShopsShopTimeoutRejected(updated); } catch (e) {
-      console.log('[processShopOrderTimeouts] shop notify:', e.message);
+    if (age >= SHOP_REMINDER_MS) {
+      try { await notifyShopsShopReminder(order); } catch (e) {
+        console.log('[processShopOrderTimeouts] shop reminder:', e.message);
+      }
+      try { await notifyAdminShopReminder(order); } catch (e) {
+        console.log('[processShopOrderTimeouts] admin reminder:', e.message);
+      }
     }
   }
 }
 
 function startShopOrderTimeoutInterval() {
-  const mins = Math.round(SHOP_RESPONSE_TIMEOUT_MS / 60000);
+  const rejectMins = Math.round(SHOP_REJECT_MS / 60000);
+  const remindMins = Math.round(SHOP_REMINDER_MS / 60000);
   processShopOrderTimeouts().catch(e => console.log('[shop-timeout] initial run:', e.message));
   setInterval(() => {
     processShopOrderTimeouts().catch(e => console.log('[shop-timeout]', e.message));
   }, SHOP_TIMEOUT_POLL_MS);
-  console.log(`⏱ Shop order timeout: auto-reject after ${mins} min (poll every ${SHOP_TIMEOUT_POLL_MS / 1000}s)`);
+  console.log(`⏱ Shop order timer: reminder ${remindMins} min, auto-reject ${rejectMins} min (poll ${SHOP_TIMEOUT_POLL_MS / 1000}s)`);
 }
 
 // ─────────────────────────────────────────────
