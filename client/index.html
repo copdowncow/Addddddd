@@ -1464,7 +1464,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 <!-- CHECKOUT FORM MODAL -->
 <div class="overlay" id="checkout-modal">
   <div class="modal" style="max-width:520px">
-    <button class="modal-x" onclick="closeModal('checkout-modal')">✕</button>
+    <button class="modal-x" onclick="closeCheckoutModal()">✕</button>
     <div style="font-size:2.4rem;margin-bottom:10px;text-align:center">🛒</div>
     <h3 style="text-align:center;margin-bottom:4px">Оформление заказа</h3>
     <p style="color:var(--gray);font-size:.83rem;text-align:center;margin-bottom:18px">Заполните данные для доставки</p>
@@ -2283,6 +2283,7 @@ window.goToCheckoutStep2 = () => {
 };
 
 window.goToCheckoutStep1 = () => {
+  window.clearCheckoutReceipt();
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'none';
   document.getElementById('checkout-step-1').style.display = 'block';
@@ -2404,6 +2405,34 @@ window.goToCheckoutStep3 = async () => {
   if (modal) modal.scrollTop = 0;
 };
 
+window.clearCheckoutReceipt = () => {
+  window.checkoutReceiptFile = null;
+  const preview = document.getElementById('receipt-preview');
+  const img = document.getElementById('receipt-img');
+  const input = document.getElementById('checkout-receipt');
+  if (preview) preview.style.display = 'none';
+  if (img) {
+    img.removeAttribute('src');
+    img.src = '';
+  }
+  if (input) {
+    input.value = '';
+    try {
+      const fresh = input.cloneNode(true);
+      fresh.id = 'checkout-receipt';
+      fresh.style.display = 'none';
+      fresh.setAttribute('accept', 'image/*');
+      fresh.onchange = (e) => window.previewReceipt(e);
+      input.replaceWith(fresh);
+    } catch (_) {}
+  }
+};
+
+window.closeCheckoutModal = () => {
+  window.resetCheckoutForm();
+  closeModal('checkout-modal');
+};
+
 window.resetCheckoutForm = () => {
   document.getElementById('checkout-name').value = '';
   document.getElementById('checkout-phone').value = '';
@@ -2421,14 +2450,16 @@ window.resetCheckoutForm = () => {
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'none';
   document.getElementById('checkout-msg').textContent = '';
-  document.getElementById('receipt-preview').style.display = 'none';
-  document.getElementById('checkout-receipt').value = '';
+  window.clearCheckoutReceipt();
   window.checkoutDelivery = null;
   window.checkoutDeliveryPayer = null;
   window.checkoutSubtotal = 0;
   window.checkoutDeliveryFee = 0;
   window.checkoutTotal = 0;
-  window.checkoutReceiptFile = null;
+  document.querySelectorAll('.delivery-option').forEach(btn => {
+    btn.style.borderColor = 'var(--border)';
+    btn.style.background = '#fff';
+  });
   const payerBlock = document.getElementById('taxi-payer-block');
   if (payerBlock) payerBlock.style.display = 'none';
   const nextBtn = document.getElementById('step2-next');
@@ -2442,15 +2473,19 @@ window.resetCheckoutForm = () => {
 };
 
 window.previewReceipt = (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  
+  const file = event.target.files?.[0];
+  if (!file) {
+    window.clearCheckoutReceipt();
+    return;
+  }
+
   if (file.size > 5 * 1024 * 1024) {
     document.getElementById('checkout-msg').style.color = 'var(--red)';
     document.getElementById('checkout-msg').textContent = 'Фото должно быть меньше 5 МБ';
+    window.clearCheckoutReceipt();
     return;
   }
-  
+
   window.checkoutReceiptFile = file;
   const reader = new FileReader();
   reader.onload = function(e) {
@@ -2570,7 +2605,7 @@ window.completeCheckout = async () => {
       }
     } catch (_) {}
 
-    document.getElementById('checkout-modal').classList.remove('open');
+    closeCheckoutModal();
     window.clearCart();
     toast('✅ Заказ отправлен! Ожидайте подтверждения.', 'success');
   } catch (error) {
