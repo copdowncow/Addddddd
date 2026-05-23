@@ -567,6 +567,9 @@ async function renderShopAdminOrders() {
       const phoneDisplay = canSeeContact ? esc(o.customer_phone) : '***';
       const addressDisplay = canSeeContact ? esc(o.customer_address) : '***';
       
+      const deliveryText = (o.delivery_type === 'taxi' && o.delivery_payer === 'buyer')
+        ? `${deliveryLabel[o.delivery_type]||o.delivery_type} (оплатить покупатель)`
+        : (deliveryLabel[o.delivery_type]||o.delivery_type);
       return `<div class="acard">
         <div class="acard-top">
           <div class="acard-info">
@@ -578,7 +581,7 @@ async function renderShopAdminOrders() {
             <div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${esc(o.customer_name || '—')}</div>
             ${canSeeContact ? `<div style="font-size:.78rem;color:var(--gray);margin-top:3px">� ${phoneDisplay}</div>` : ''}
             ${canSeeContact ? `<div style="font-size:.78rem;color:var(--gray)">📍 ${addressDisplay}</div>` : ''}
-            <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}</div>
+            <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryText}</div>
             <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${(o.total||0).toLocaleString('ru')} сом.</div>
           </div>
         </div>
