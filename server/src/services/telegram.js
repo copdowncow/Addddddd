@@ -196,6 +196,86 @@ async function patchOrderChatId(orderId, chatId, { force = false } = {}) {
   }
 }
 
+function customerChatKey(chatId) {
+  return String(chatId);
+}
+
+// Надёжное обновление заказа: повтор без опциональных колонок при ошибках схемы
+async function patchOrder(db, orderId, fields) {
+  const payload = { ...fields };
+  const dropOrder = ['confirmed_at', 'refund_reason', 'delivered_at', 'notes'];
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { data, error } = await db
+      .from('orders')
+      .update(payload)
+      .eq('id', orderId)
+      .select('*')
+      .maybeSingle();
+
+    if (!error && data) return { ok: true, order: data };
+
+    const msg = (error?.message || '').toLowerCase();
+    const details = (error?.details || '').toLowerCase();
+    console.error('[patchOrder]', orderId, 'attempt', attempt, error?.message, error?.details, error?.hint);
+
+    if (msg.includes('check constraint') && payload.status) {
+      return { ok: false, error, constraint: true };
+    }
+
+    const missingCol = msg.match(/could not find the ['"]?(\w+)['"]? column/i)
+      || details.match(/column ['"]?(\w+)['"]?/i);
+    if (missingCol && payload[missingCol[1]] !== undefined) {
+      delete payload[missingCol[1]];
+      continue;
+    }
+
+    if (/confirmed_at|refund_reason|notes|delivered_at/.test(msg + details)) {
+      let stripped = false;
+      for (const col of dropOrder) {
+        if (payload[col] !== undefined) { delete payload[col]; stripped = true; }
+      }
+      if (stripped) continue;
+    }
+
+    if (!error && !data) {
+      const { data: row } = await db.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (row) return { ok: true, order: row };
+    }
+
+    return { ok: false, error };
+  }
+  return { ok: false, error: new Error('patchOrder max attempts') };
+}
+
+async function confirmOrderReceived(db, orderId) {
+  const attempts = [
+    { status: 'confirmed_received', confirmed_at: new Date().toISOString() },
+    { status: 'confirmed_received' },
+    { status: 'confirmed' },
+  ];
+  for (const fields of attempts) {
+    const r = await patchOrder(db, orderId, fields);
+    if (r.ok) return r;
+    if (r.constraint) break;
+  }
+  return { ok: false };
+}
+
+async function submitRefundRequest(db, orderId, reason) {
+  const attempts = [
+    { status: 'refund_requested', refund_reason: reason },
+    { status: 'refund_requested' },
+    { status: 'cancelled', notes: `⚠️ ЗАПРОС ВОЗВРАТА: ${reason}` },
+  ];
+  for (const fields of attempts) {
+    const r = await patchOrder(db, orderId, fields);
+    if (r.ok) return { ...r, usedStatus: fields.status };
+    if (r.constraint) continue;
+  }
+  return { ok: false };
+}
+
 function getMiniAppUrl() {
   const url = (process.env.MINI_APP_URL || process.env.SITE_URL || '').replace(/\/$/, '');
   if (!url) return 'https://addddddd-production.up.railway.app';
@@ -2006,46 +2086,24 @@ function registerCustomerOrderHandlers() {
       }
 
       if (action === 'confirm') {
-        if (order.status === 'confirmed_received') {
+        const doneStatuses = ['confirmed_received', 'confirmed'];
+        if (doneStatuses.includes(order.status)) {
           await userBot.sendMessage(chatId, '✅ Вы уже подтвердили получение этого заказа.').catch(() => {});
           return;
         }
         const canConfirm = ['delivered', 'ready'].includes(order.status);
         if (!canConfirm) {
-          await userBot.sendMessage(chatId, 'ℹ️ Подтвердить получение можно после доставки заказа магазином.').catch(() => {});
+          await userBot.sendMessage(chatId, 'ℹ️ Подтвердить получение можно после того, как магазин отметит заказ доставленным.').catch(() => {});
           return;
         }
 
-        const updatePayload = { status: 'confirmed_received', confirmed_at: new Date().toISOString() };
-        let { data: updated, error } = await db.from('orders')
-          .update(updatePayload)
-          .eq('id', orderId)
-          .neq('status', 'confirmed_received')
-          .select()
-          .maybeSingle();
-
-        if (error) {
-          console.error('[cust_confirm] update error:', error.message, error.details, error.hint);
-          const { data: retry } = await db.from('orders')
-            .update({ status: 'confirmed_received' })
-            .eq('id', orderId)
-            .neq('status', 'confirmed_received')
-            .select()
-            .maybeSingle();
-          updated = retry;
-          error = null;
-        }
-
-        if (!updated) {
-          const { data: current } = await db.from('orders').select('status').eq('id', orderId).maybeSingle();
-          if (current?.status === 'confirmed_received') {
-            await userBot.sendMessage(chatId, '✅ Вы уже подтвердили получение этого заказа.').catch(() => {});
-            return;
-          }
-          console.error('[cust_confirm] update returned no row, was:', order.status);
+        const result = await confirmOrderReceived(db, orderId);
+        if (!result.ok) {
+          console.error('[cust_confirm] failed for', orderId, 'from status', order.status);
           await userBot.sendMessage(chatId, '❌ Не удалось подтвердить заказ. Напишите @rebuket_admin.').catch(() => {});
           return;
         }
+        const updated = result.order;
         await userBot.sendMessage(chatId, `🌟 <b>Спасибо за заказ!</b>\n\nНадеемся, букет вам понравился! Оставьте отзыв @rebuket_admin.`, { parse_mode: 'HTML' });
 
         if (q.message) {
@@ -2069,11 +2127,11 @@ function registerCustomerOrderHandlers() {
           }
         } catch (_) {}
       } else if (action === 'problem') {
-        if (!['delivered', 'confirmed_received', 'refund_requested'].includes(order.status)) {
-          await userBot.sendMessage(chatId, 'ℹ️ Сообщить о проблеме можно после доставки заказа.').catch(() => {});
+        if (!['delivered', 'ready', 'confirmed_received', 'confirmed', 'refund_requested'].includes(order.status)) {
+          await userBot.sendMessage(chatId, 'ℹ️ Сообщить о проблеме можно, когда заказ уже у курьера или доставлен.').catch(() => {});
           return;
         }
-        customerPendingRefundReason.set(chatId, orderId);
+        customerPendingRefundReason.set(customerChatKey(chatId), orderId);
         await userBot.sendMessage(chatId,
           `⚠️ <b>Опишите проблему с заказом #${orderId}</b>\n\nНапишите одним сообщением — что не так?\n\n<i>Отмена: /cancel</i>`,
           { parse_mode: 'HTML' });
@@ -2085,8 +2143,9 @@ function registerCustomerOrderHandlers() {
   });
 
   userBot.onText(/\/cancel/, async (msg) => {
-    if (customerPendingRefundReason.has(msg.chat.id)) {
-      customerPendingRefundReason.delete(msg.chat.id);
+    const key = customerChatKey(msg.chat.id);
+    if (customerPendingRefundReason.has(key)) {
+      customerPendingRefundReason.delete(key);
       await userBot.sendMessage(msg.chat.id, '↩️ Запрос на возврат отменён.');
     }
   });
@@ -2094,54 +2153,71 @@ function registerCustomerOrderHandlers() {
   userBot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return;
     const chatId = msg.chat.id;
-    const orderId = customerPendingRefundReason.get(chatId);
+    const pendingKey = customerChatKey(chatId);
+    const orderId = customerPendingRefundReason.get(pendingKey);
     if (orderId) {
-      customerPendingRefundReason.delete(chatId);
       try {
         const { createSupabaseClient } = require('../db/supabase');
         const db = createSupabaseClient();
         const order = await ensureCustomerOwnsOrder(db, orderId, chatId);
         if (!order) {
+          customerPendingRefundReason.delete(pendingKey);
           await userBot.sendMessage(chatId, '❌ Заказ не найден.');
           return;
         }
         const reason = msg.text.trim().slice(0, 1000);
-        const { data: updated, error } = await db.from('orders')
-          .update({ status: 'refund_requested', refund_reason: reason })
-          .eq('id', orderId)
-          .select()
-          .single();
-        if (error || !updated) {
+        if (!reason) {
+          await userBot.sendMessage(chatId, 'ℹ️ Напишите текстом, что не так с заказом.');
+          return;
+        }
+
+        const result = await submitRefundRequest(db, orderId, reason);
+        if (!result.ok) {
+          console.error('[refund] submit failed', orderId, result.error?.message);
           await userBot.sendMessage(chatId, '❌ Не удалось отправить обращение. Попробуйте снова или напишите @rebuket_admin.');
           return;
         }
+
+        customerPendingRefundReason.delete(pendingKey);
+        const updated = result.order;
+
         await userBot.sendMessage(chatId,
-          `✅ <b>Запрос на возврат отправлен</b>\n\nМагазин рассмотрит обращение.\n\n📦 Заказ #${orderId}\n📝 Причина: ${reason}`,
+          `✅ <b>Запрос на возврат отправлен</b>\n\nМагазин рассмотрит обращение.\n\n📦 Заказ #${orderId}\n📝 Причина: ${escHtml(reason)}`,
           { parse_mode: 'HTML' });
+
+        const shopRefundKb = result.usedStatus === 'refund_requested'
+          ? {
+              inline_keyboard: [[
+                { text: '✅ Одобрить возврат', callback_data: `shop_refund_approve:${orderId}` },
+                { text: '⚠️ Оспорить', callback_data: `shop_refund_dispute:${orderId}` }
+              ]]
+            }
+          : undefined;
+
         try {
           let items = updated.items;
           if (typeof items === 'string') items = JSON.parse(items);
           const sellerPhones = [...new Set((items || []).map(it => it.seller_phone).filter(Boolean))];
           const shops = await findShopsBySellerPhones(sellerPhones);
           const shopText =
-            `⚠️ <b>Запрос на возврат от клиента</b>\n\n📦 Заказ #${orderId}\n💰 ${(Number(updated.total) || 0).toLocaleString('ru')} сом\n\n📝 <b>Причина:</b>\n${reason}`;
+            `⚠️ <b>Запрос на возврат от клиента</b>\n\n📦 Заказ #${orderId}\n💰 ${(Number(updated.total) || Number(updated.total_amount) || 0).toLocaleString('ru')} сом\n\n📝 <b>Причина:</b>\n${escHtml(reason)}`;
           for (const s of shops) {
             if (s.telegram_chat_id && shopBot) {
               await shopBot.sendMessage(s.telegram_chat_id, shopText, {
                 parse_mode: 'HTML',
-                reply_markup: {
-                  inline_keyboard: [[
-                    { text: '✅ Одобрить возврат', callback_data: `shop_refund_approve:${orderId}` },
-                    { text: '⚠️ Оспорить', callback_data: `shop_refund_dispute:${orderId}` }
-                  ]]
-                }
+                reply_markup: shopRefundKb,
               }).catch(() => {});
             }
           }
         } catch (e) { console.log('refund notify shop err:', e.message); }
         try {
           for (const adminChat of adminChatIds) {
-            if (adminBot) await adminBot.sendMessage(adminChat, `⚠️ Возврат запрошен: заказ #${orderId}\nПричина: ${reason}`).catch(() => {});
+            if (adminBot) {
+              await adminBot.sendMessage(adminChat,
+                `⚠️ <b>Возврат запрошен</b>\n\n📦 Заказ #${orderId}\n📝 ${escHtml(reason)}`,
+                { parse_mode: 'HTML' }
+              ).catch(() => {});
+            }
           }
         } catch (_) {}
       } catch (e) {
@@ -2285,4 +2361,4 @@ module.exports = {
   getChatIdByUsername,
   patchOrderChatId,
   phoneDigits,
-};
+}; 
