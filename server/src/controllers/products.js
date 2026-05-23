@@ -518,7 +518,11 @@ exports.createProduct = async (req, res) => {
       })
     )
       .then(photos => getClient().from('products').update({ photos }).eq('id', data.id))
-      .then(() => notifyProduct({ ...data }))
+      .then(() => {
+        // Загружаем актуальные данные продукта после обновления фото
+        return getClient().from('products').select('*').eq('id', data.id).single();
+      })
+      .then(updatedProduct => notifyProduct(updatedProduct))
       .catch(err => console.error('Фото/уведомление ошибка:', err));
 
   } catch (e) {

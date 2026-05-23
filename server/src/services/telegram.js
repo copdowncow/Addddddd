@@ -1690,7 +1690,7 @@ async function notifyProduct(p) {
     text =
       `📦 <b>Новое объявление на проверке</b>\n─────────────────\n` +
       `${CATS[p.category] || p.category}: <b>${escHtml(p.title)}</b>\n` +
-      `💰 ${sellerPrice.toLocaleString('ru')} TJS · 📍 ${escHtml(p.city || '—')}\n` +
+      `💰 ${buyerPrice.toLocaleString('ru')} TJS · 📍 ${escHtml(p.city || '—')}\n` +
       `👤 ${escHtml(p.seller_name || '—')} · 📞 ${escHtml(p.seller_phone)}\n` +
       (p.seller_telegram ? `✈️ ${escHtml(p.seller_telegram)}\n` : '') +
       `🔗 <a href="${url}">Открыть объявление</a>`;
