@@ -351,8 +351,7 @@ exports.updateOrderStatus = async (req, res) => {
     if (newStatus === 'payment_confirmed') {
       console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— notifying shop + customer');
       try {
-        const { notifySellerAboutOrder, notifyCustomerOnPaymentConfirmed, setShopResponseTimer } = require('../services/telegram');
-        await setShopResponseTimer(data.id);
+        const { notifySellerAboutOrder, notifyCustomerOnPaymentConfirmed } = require('../services/telegram');
         await notifySellerAboutOrder(data);
         await notifyCustomerOnPaymentConfirmed(data);
       } catch (e) {

@@ -3,7 +3,7 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_confirmed_at TIMESTAMPTZ;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS shop_response_deadline_at TIMESTAMPTZ;
 
 UPDATE orders
-SET payment_confirmed_at = COALESCE(payment_confirmed_at, updated_at)
+SET payment_confirmed_at = COALESCE(payment_confirmed_at, created_at)
 WHERE status IN ('payment_confirmed', 'confirmed')
   AND payment_confirmed_at IS NULL;
 
