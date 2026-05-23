@@ -244,14 +244,27 @@ function downloadUrlBuffer(url) {
   });
 }
 
+const PHOTO_FILE_OPTS = { filename: 'bouquet.jpg', contentType: 'image/jpeg' };
+
+async function downloadBotFile(bot, fileId) {
+  const fileLink = await bot.getFileLink(fileId);
+  return downloadUrlBuffer(fileLink);
+}
+
 async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
   if (!userBot && !ensureUserBot()) return false;
   if (!chatId || !photoSource) return false;
   const cid = Number(chatId);
   try {
     if (Buffer.isBuffer(photoSource)) {
-      await userBot.sendPhoto(cid, photoSource, options);
-      return true;
+      try {
+        await userBot.sendPhoto(cid, photoSource, options, PHOTO_FILE_OPTS);
+        return true;
+      } catch (bufErr) {
+        console.log('[sendPhotoToCustomer] sendPhoto buffer failed, try document:', bufErr.message);
+        await userBot.sendDocument(cid, photoSource, options, PHOTO_FILE_OPTS);
+        return true;
+      }
     }
     const url = String(photoSource).trim();
     if (!url) return false;
@@ -261,13 +274,27 @@ async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
     } catch (urlErr) {
       console.log('[sendPhotoToCustomer] URL send failed, retry buffer:', urlErr.message);
       const buf = await downloadUrlBuffer(url);
-      await userBot.sendPhoto(cid, buf, options);
+      await userBot.sendPhoto(cid, buf, options, PHOTO_FILE_OPTS);
       return true;
     }
   } catch (e) {
     console.error('[sendPhotoToCustomer] Failed:', cid, e.message);
     return false;
   }
+}
+
+async function ensureCustomerOwnsOrder(db, orderId, chatId) {
+  const { data: order, error } = await db.from('orders').select('*').eq('id', orderId).maybeSingle();
+  if (error || !order) return null;
+  const cid = Number(chatId);
+  const stored = order.customer_chat_id != null && order.customer_chat_id !== ''
+    ? Number(order.customer_chat_id)
+    : null;
+  if (stored == null || Number.isNaN(stored) || stored !== cid) {
+    await db.from('orders').update({ customer_chat_id: cid }).eq('id', orderId);
+    order.customer_chat_id = cid;
+  }
+  return order;
 }
 
 function buildAdminUnreachableWarning(order, result) {
@@ -342,19 +369,11 @@ async function notifyCustomerOnPaymentConfirmed(order) {
   return notifyResult;
 }
 
-// Lazily create userBot if it was not started (e.g. missing token at startup)
+// Lazily start full user bot (polling + handlers), not a send-only stub
 function ensureUserBot() {
   if (userBot) return true;
-  const token = process.env.BOT_TOKEN_USER;
-  if (!token) return false;
-  try {
-    userBot = new TG(token, { polling: false });
-    console.log('[ensureUserBot] userBot lazily initialized');
-    return true;
-  } catch (e) {
-    console.error('[ensureUserBot] failed:', e.message);
-    return false;
-  }
+  initUserBot();
+  return !!userBot;
 }
 
 function ensureShopBot() {
@@ -705,14 +724,16 @@ function initBots() {
   initUserBot();
   initAdminBot();
   initShopBot();
-  setupCustomerOrderHandlers();
   startAutoConfirmInterval();
 }
 
 // ─────────────────────────────────────────────
 // 👤 USER BOT — для покупателей
 // ─────────────────────────────────────────────
+let customerOrderHandlersRegistered = false;
+
 function initUserBot() {
+  if (userBot) return;
   const token = process.env.BOT_TOKEN_USER;
   if (!token) { console.log('BOT_TOKEN_USER не задан'); return; }
   userBot = new TG(token, { polling: true });
@@ -885,15 +906,7 @@ function initUserBot() {
     );
   });
 
-  userBot.on('message', async (msg) => {
-    if (!msg.text || msg.text.startsWith('/')) return;
-    if (customerPendingRefundReason.has(msg.chat.id)) return;
-
-    await userBot.sendMessage(msg.chat.id,
-      `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
-      { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
-    );
-  });
+  registerCustomerOrderHandlers();
 
   userBot.on('polling_error', (err) => {
     if (!err.message?.includes('409')) console.log('USER BOT error:', err.message);
@@ -1453,16 +1466,7 @@ function initShopBot() {
 
     try {
       const photo = msg.photo[msg.photo.length - 1];
-      const fileLink = await shopBot.getFileLink(photo.file_id);
-      const https = require('https');
-      const buffer = await new Promise((resolve, reject) => {
-        https.get(fileLink, (resp) => {
-          const chunks = [];
-          resp.on('data', c => chunks.push(c));
-          resp.on('end', () => resolve(Buffer.concat(chunks)));
-          resp.on('error', reject);
-        }).on('error', reject);
-      });
+      const buffer = await downloadBotFile(shopBot, photo.file_id);
       const { uploadPhoto } = require('../db/supabase');
       const photoUrl = await uploadPhoto(buffer, `delivery-${orderId}-${Date.now()}.jpg`, 'image/jpeg');
       const db = getDb();
@@ -1683,13 +1687,18 @@ async function notifyCustomerPaymentRejected(order) {
 // ─────────────────────────────────────────────
 async function notifyCustomerOrderReady(order, shop, photoSource) {
   if (!order?.id) return false;
-  if (!shouldSendNotification(order.id, 'customer_status_ready')) return false;
+  const isFreshPhoto = Buffer.isBuffer(photoSource);
+  if (!isFreshPhoto) {
+    const dedupKey = photoSource ? 'customer_ready_photo' : 'customer_status_ready';
+    if (!shouldSendNotification(order.id, dedupKey)) return false;
+  }
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
-    console.log('[notifyCustomerOrderReady] no chat_id for order', order.id);
+    console.log('[notifyCustomerOrderReady] no chat_id for order', order.id, 'phone:', order.customer_phone);
     return false;
   }
+  order.customer_chat_id = chatId;
 
   const shopName = shop?.shop_name || 'Магазин';
   const text =
@@ -1790,49 +1799,87 @@ async function notifyCustomerStatusChanged(order, shop) {
 // ─────────────────────────────────────────────
 // 👤 Обработчики действий покупателя
 // ─────────────────────────────────────────────
-function setupCustomerOrderHandlers() {
-  if (!userBot) return;
+function registerCustomerOrderHandlers() {
+  if (!userBot || customerOrderHandlersRegistered) return;
+  customerOrderHandlersRegistered = true;
 
   userBot.on('callback_query', async (q) => {
     const data = q.data || '';
     const m = data.match(/^cust_(confirm|problem):(.+)$/);
     if (!m) return;
+
     const [, action, orderId] = m;
-    const chatId = q.message.chat.id;
+    const chatId = q.message?.chat?.id;
+    if (!chatId) return;
+
+    await userBot.answerCallbackQuery(q.id).catch(() => {});
 
     try {
       const { createSupabaseClient } = require('../db/supabase');
       const db = createSupabaseClient();
+      const order = await ensureCustomerOwnsOrder(db, orderId, chatId);
+      if (!order) {
+        await userBot.sendMessage(chatId, '❌ Заказ не найден.').catch(() => {});
+        return;
+      }
 
       if (action === 'confirm') {
-        const { data: updated } = await db.from('orders')
+        if (!['delivered', 'confirmed_received'].includes(order.status)) {
+          await userBot.sendMessage(chatId, 'ℹ️ Подтвердить получение можно только после доставки заказа.').catch(() => {});
+          return;
+        }
+        if (order.status === 'confirmed_received') {
+          await userBot.sendMessage(chatId, '✅ Вы уже подтвердили получение этого заказа.').catch(() => {});
+          return;
+        }
+
+        const { data: updated, error } = await db.from('orders')
           .update({ status: 'confirmed_received', confirmed_at: new Date().toISOString() })
-          .eq('id', orderId).eq('customer_chat_id', chatId)
-          .select().single();
-        if (!updated) { await userBot.answerCallbackQuery(q.id, { text: 'Заказ не найден', show_alert: true }); return; }
-        await userBot.answerCallbackQuery(q.id, { text: '✅ Спасибо!' });
+          .eq('id', orderId)
+          .in('status', ['delivered'])
+          .select()
+          .maybeSingle();
+
+        if (error || !updated) {
+          console.error('[cust_confirm] update failed:', error?.message, 'status:', order.status);
+          await userBot.sendMessage(chatId, '❌ Не удалось подтвердить заказ. Напишите @rebuket_admin.').catch(() => {});
+          return;
+        }
         await userBot.sendMessage(chatId, `🌟 <b>Спасибо за заказ!</b>\n\nНадеемся, букет вам понравился! Оставьте отзыв @rebuket_admin.`, { parse_mode: 'HTML' });
+
+        if (q.message) {
+          try {
+            await userBot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+              chat_id: q.message.chat.id,
+              message_id: q.message.message_id,
+            });
+          } catch (_) {}
+        }
+
         try {
           let items = updated.items;
           if (typeof items === 'string') items = JSON.parse(items);
-          const sellerPhones = [...new Set((items||[]).map(it => it.seller_phone).filter(Boolean))];
-          const { data: shops } = await db.from('shops').select('telegram_chat_id').in('phone', sellerPhones);
-          for (const s of shops || []) {
+          const sellerPhones = [...new Set((items || []).map(it => it.seller_phone).filter(Boolean))];
+          const shops = await findShopsBySellerPhones(sellerPhones);
+          for (const s of shops) {
             if (s.telegram_chat_id && shopBot) {
-              await shopBot.sendMessage(s.telegram_chat_id, `🌟 Клиент подтвердил получение заказа #${orderId}!`).catch(_=>{});
+              await shopBot.sendMessage(s.telegram_chat_id, `🌟 Клиент подтвердил получение заказа #${orderId}!`).catch(() => {});
             }
           }
-        } catch(_){}
+        } catch (_) {}
       } else if (action === 'problem') {
+        if (!['delivered', 'confirmed_received', 'refund_requested'].includes(order.status)) {
+          await userBot.sendMessage(chatId, 'ℹ️ Сообщить о проблеме можно после доставки заказа.').catch(() => {});
+          return;
+        }
         customerPendingRefundReason.set(chatId, orderId);
-        await userBot.answerCallbackQuery(q.id, { text: 'Опишите проблему' });
         await userBot.sendMessage(chatId,
           `⚠️ <b>Опишите проблему с заказом #${orderId}</b>\n\nНапишите одним сообщением — что не так?\n\n<i>Отмена: /cancel</i>`,
           { parse_mode: 'HTML' });
       }
     } catch (e) {
       console.error('[userBot order callback]', e.message);
-      try { await userBot.answerCallbackQuery(q.id, { text: 'Ошибка', show_alert: true }); } catch(_){}
+      try { await userBot.sendMessage(chatId, '❌ Ошибка: ' + e.message); } catch (_) {}
     }
   });
 
@@ -1847,51 +1894,69 @@ function setupCustomerOrderHandlers() {
     if (!msg.text || msg.text.startsWith('/')) return;
     const chatId = msg.chat.id;
     const orderId = customerPendingRefundReason.get(chatId);
-    if (!orderId) return;
-    customerPendingRefundReason.delete(chatId);
-
-    try {
-      const { createSupabaseClient } = require('../db/supabase');
-      const db = createSupabaseClient();
-      const reason = msg.text.trim().slice(0, 1000);
-      const { data: updated } = await db.from('orders')
-        .update({ status: 'refund_requested', refund_reason: reason })
-        .eq('id', orderId).eq('customer_chat_id', chatId)
-        .select().single();
-      if (!updated) { await userBot.sendMessage(chatId, '❌ Заказ не найден.'); return; }
-      await userBot.sendMessage(chatId,
-        `✅ <b>Запрос на возврат отправлен</b>\n\nМагазин рассмотрит обращение.\n\n📦 Заказ #${orderId}\n📝 Причина: ${reason}`,
-        { parse_mode: 'HTML' });
+    if (orderId) {
+      customerPendingRefundReason.delete(chatId);
       try {
-        let items = updated.items;
-        if (typeof items === 'string') items = JSON.parse(items);
-        const sellerPhones = [...new Set((items||[]).map(it => it.seller_phone).filter(Boolean))];
-        const { data: shops } = await db.from('shops').select('telegram_chat_id, shop_name, phone').in('phone', sellerPhones);
-        const shopText =
-          `⚠️ <b>Запрос на возврат от клиента</b>\n\n📦 Заказ #${orderId}\n💰 ${(Number(updated.total)||0).toLocaleString('ru')} сом\n\n📝 <b>Причина:</b>\n${reason}`;
-        for (const s of shops || []) {
-          if (s.telegram_chat_id && shopBot) {
-            await shopBot.sendMessage(s.telegram_chat_id, shopText, {
-              parse_mode: 'HTML',
-              reply_markup: {
-                inline_keyboard: [[
-                  { text: '✅ Одобрить возврат', callback_data: `shop_refund_approve:${orderId}` },
-                  { text: '⚠️ Оспорить',         callback_data: `shop_refund_dispute:${orderId}` }
-                ]]
-              }
-            }).catch(_=>{});
+        const { createSupabaseClient } = require('../db/supabase');
+        const db = createSupabaseClient();
+        const order = await ensureCustomerOwnsOrder(db, orderId, chatId);
+        if (!order) {
+          await userBot.sendMessage(chatId, '❌ Заказ не найден.');
+          return;
+        }
+        const reason = msg.text.trim().slice(0, 1000);
+        const { data: updated, error } = await db.from('orders')
+          .update({ status: 'refund_requested', refund_reason: reason })
+          .eq('id', orderId)
+          .select()
+          .single();
+        if (error || !updated) {
+          await userBot.sendMessage(chatId, '❌ Не удалось отправить обращение. Попробуйте снова или напишите @rebuket_admin.');
+          return;
+        }
+        await userBot.sendMessage(chatId,
+          `✅ <b>Запрос на возврат отправлен</b>\n\nМагазин рассмотрит обращение.\n\n📦 Заказ #${orderId}\n📝 Причина: ${reason}`,
+          { parse_mode: 'HTML' });
+        try {
+          let items = updated.items;
+          if (typeof items === 'string') items = JSON.parse(items);
+          const sellerPhones = [...new Set((items || []).map(it => it.seller_phone).filter(Boolean))];
+          const shops = await findShopsBySellerPhones(sellerPhones);
+          const shopText =
+            `⚠️ <b>Запрос на возврат от клиента</b>\n\n📦 Заказ #${orderId}\n💰 ${(Number(updated.total) || 0).toLocaleString('ru')} сом\n\n📝 <b>Причина:</b>\n${reason}`;
+          for (const s of shops) {
+            if (s.telegram_chat_id && shopBot) {
+              await shopBot.sendMessage(s.telegram_chat_id, shopText, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                  inline_keyboard: [[
+                    { text: '✅ Одобрить возврат', callback_data: `shop_refund_approve:${orderId}` },
+                    { text: '⚠️ Оспорить', callback_data: `shop_refund_dispute:${orderId}` }
+                  ]]
+                }
+              }).catch(() => {});
+            }
           }
-        }
-      } catch(e) { console.log('refund notify shop err:', e.message); }
-      try {
-        for (const adminChat of adminChatIds) {
-          if (adminBot) await adminBot.sendMessage(adminChat, `⚠️ Возврат запрошен: заказ #${orderId}\nПричина: ${reason}`).catch(_=>{});
-        }
-      } catch(_){}
-    } catch (e) {
-      console.error('[userBot refund reason]', e.message);
+        } catch (e) { console.log('refund notify shop err:', e.message); }
+        try {
+          for (const adminChat of adminChatIds) {
+            if (adminBot) await adminBot.sendMessage(adminChat, `⚠️ Возврат запрошен: заказ #${orderId}\nПричина: ${reason}`).catch(() => {});
+          }
+        } catch (_) {}
+      } catch (e) {
+        console.error('[userBot refund reason]', e.message);
+        await userBot.sendMessage(chatId, '❌ Ошибка. Напишите @rebuket_admin.').catch(() => {});
+      }
+      return;
     }
+
+    await userBot.sendMessage(chatId,
+      `Нажмите кнопку ниже чтобы открыть ReBuket 🌸`,
+      { reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: getMiniAppUrl() }]] } }
+    );
   });
+
+  console.log('[userBot] Customer order handlers registered');
 }
 
 // ─────────────────────────────────────────────
