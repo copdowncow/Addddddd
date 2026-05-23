@@ -1657,6 +1657,8 @@ async function notifySellerRejected(p) {
 const CATS = { bouquet: '💐 Букет', basket: '🧺 Корзина', bear: '🧸 Игрушки', sweets: '🍰 Сладости' };
 
 async function notifyProduct(p) {
+  console.log('[notifyProduct] Received product data:', JSON.stringify(p, null, 2));
+
   const url = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
   const isShop = p.listing_type === 'shop' || p.pricing_mode === 'inclusive';
   const Commission = require('./commission');
@@ -1696,6 +1698,7 @@ async function notifyProduct(p) {
       `🔗 <a href="${url}">Открыть объявление</a>`;
   }
 
+  console.log('[notifyProduct] Sending notification text:', text);
   await sendToAdmins(text, {
     reply_markup: {
       inline_keyboard: [
