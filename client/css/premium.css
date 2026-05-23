@@ -822,8 +822,9 @@
   color: var(--gray, #5b6471);
 }
 
-.cart-drawer {
-  box-shadow: -20px 0 60px rgba(15,17,23,.18);
+.page-cart .cart-page-wrap {
+  max-width: 560px;
+  margin: 0 auto;
 }
 .cart-checkout-btn {
   transition: transform .15s var(--p-ease), box-shadow .15s var(--p-ease);

@@ -1711,7 +1711,7 @@ export async function handleRoute() {
     window.openProduct(hash.replace('#product-',''));
   } else {
     const page = hash.replace('#','') || 'home';
-    const valid = ['home','catalog','sell','admin','product','shop-profile'];
+    const valid = ['home','catalog','sell','admin','product','shop-profile','cart','shop-view','register'];
     goPage(valid.includes(page) ? page : 'home', false);
     if (page === 'catalog') await loadCatalog();
     if (page === 'shop-profile') await openShopProfile();

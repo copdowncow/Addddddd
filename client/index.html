@@ -658,22 +658,25 @@ nav {
 .atab.active { color: var(--green); border-bottom-color: var(--green); }
 
 /* ============================================================
-   CART SIDEBAR
+   CART PAGE
    ============================================================ */
-.cart-overlay { display: none; position: fixed; inset: 0; background: rgba(15,17,23,.55); z-index: 1100; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
-.cart-overlay.open { display: block; animation: fadeOverlay .3s ease; }
-@keyframes fadeOverlay { from{opacity:0} to{opacity:1} }
-.cart-drawer { position: fixed; top: 0; right: -100%; bottom: 0; width: 100%; max-width: 440px; background: #fff; z-index: 1101; display: flex; flex-direction: column; box-shadow: -16px 0 80px rgba(0,0,0,.18); transition: right .4s cubic-bezier(.22,1,.36,1); border-radius: 24px 0 0 24px; }
-.cart-drawer.open { right: 0; }
-.cart-head { display: flex; align-items: center; justify-content: space-between; padding: 24px 26px 20px; background: linear-gradient(135deg,#0f1117 0%,#1e2330 100%); border-radius: 24px 0 0 0; flex-shrink: 0; position: relative; overflow: hidden; }
+.page-cart .cart-page-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.page-cart .cart-head { display: flex; align-items: center; justify-content: space-between; padding: 24px 26px 20px; background: linear-gradient(135deg,#0f1117 0%,#1e2330 100%); border-radius: 16px; flex-shrink: 0; position: relative; overflow: hidden; margin-top: 4px; }
 .cart-head::before { content: ''; position: absolute; top: -30px; right: -30px; width: 140px; height: 140px; background: radial-gradient(circle,rgba(34,160,91,.25) 0%,transparent 70%); border-radius: 50%; pointer-events: none; }
 .cart-head-left { display: flex; flex-direction: column; gap: 4px; z-index: 1; }
 .cart-head-title { font-family: 'Cormorant Garamond',serif; font-size: 1.6rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
 .cart-head-sub { font-size: .78rem; color: rgba(255,255,255,.45); font-weight: 400; }
 .cart-count-pill { display: inline-flex; align-items: center; justify-content: center; background: var(--green); color: #fff; font-size: .7rem; font-weight: 700; min-width: 22px; height: 22px; border-radius: 50px; padding: 0 6px; }
-.cart-close { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.15); background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); font-size: .9rem; transition: all .2s; z-index: 5; position: relative; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-.cart-close:hover { background: rgba(255,255,255,.18); color: #fff; border-color: rgba(255,255,255,.3); }
-.cart-body { flex: 1; overflow-y: auto; padding: 20px 24px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.page-cart .cart-body { padding: 20px 4px 12px; min-height: 120px; }
+.page-cart .cart-foot { border-radius: 16px; border: 1.5px solid var(--border); margin-top: 8px; }
+.page-cart .cart-empty { min-height: 36vh; padding-bottom: 32px; }
+.cart-body { flex: 1; overflow-y: visible; padding: 20px 24px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .cart-body::-webkit-scrollbar { width: 4px; }
 .cart-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 .cart-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; color: var(--gray); padding-bottom: 60px; }
@@ -701,7 +704,7 @@ nav {
 .ci-qty-val { min-width: 26px; text-align: center; font-size: .9rem; font-weight: 700; color: var(--black); user-select: none; }
 .ci-remove { background: none; border: 1.5px solid var(--border); color: var(--gray); font-size: .72rem; font-weight: 700; padding: 0; transition: all .15s; border-radius: 50%; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; cursor: pointer; }
 .ci-remove:hover { color: var(--red); background: #fdecea; border-color: #fca5a5; }
-.cart-foot { padding: 16px 24px 28px; border-top: 1px solid var(--border); flex-shrink: 0; background: #fff; border-radius: 0 0 0 24px; }
+.cart-foot { padding: 16px 24px 28px; border-top: 1px solid var(--border); flex-shrink: 0; background: #fff; }
 .cart-summary { background: var(--warm); border-radius: 16px; padding: 16px 18px; margin-bottom: 16px; border: 1.5px solid var(--border); }
 .cart-summary-row { display: flex; justify-content: space-between; align-items: center; font-size: .83rem; color: var(--gray); margin-bottom: 8px; }
 .cart-summary-row:last-child { margin-bottom: 0; }
@@ -796,7 +799,6 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 }
 @media (max-width: 480px) {
   .pgrid,#pgrid { grid-template-columns: 1fr 1fr; gap: 12px; }
-  .cart-drawer { max-width: 100%; border-radius: 20px 20px 0 0; top: auto; height: 92vh; }
   .register-hero { padding: 28px 20px; }
 }
 @media (max-width: 600px) {
@@ -853,12 +855,12 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
       <button class="btn-shop-login" id="nav-shop-btn" onclick="onShopBtnClick()">
         <span>🏪</span> <span id="nav-shop-label">Войти как магазин</span>
       </button>
-      <button class="nav-cart" onclick="openCart()" title="Корзина">
+      <button class="nav-cart" onclick="goPage('cart')" title="Корзина">
         🛒
         <span class="cart-badge" id="cart-badge">0</span>
       </button>
     </div>
-    <button class="nav-cart" onclick="openCart()" title="Корзина" style="display:none" id="mob-cart-btn">
+    <button class="nav-cart" onclick="goPage('cart')" title="Корзина" style="display:none" id="mob-cart-btn">
       🛒
       <span class="cart-badge" id="mob-cart-badge">0</span>
     </button>
@@ -873,45 +875,9 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     <a onclick="goPage('sell');closeDrawer()">➕ Разместить объявление</a>
     <a class="nav-admin" onclick="goPage('admin');closeDrawer()">⚙ Панель администратора</a>
     <a class="drawer-shop" onclick="onShopBtnClick();closeDrawer()">🏪 <span id="drawer-shop-label">Войти как магазин</span></a>
-    <a onclick="openCart();closeDrawer()">🛒 Корзина <span id="drawer-cart-count" style="background:var(--red);color:#fff;border-radius:50px;padding:2px 8px;font-size:.72rem;font-weight:700;margin-left:6px;display:none">0</span></a>
+    <a onclick="goPage('cart');closeDrawer()">🛒 Корзина <span id="drawer-cart-count" style="background:var(--red);color:#fff;border-radius:50px;padding:2px 8px;font-size:.72rem;font-weight:700;margin-left:6px;display:none">0</span></a>
   </div>
 </nav>
-
-<!-- CART DRAWER -->
-<div class="cart-overlay" id="cart-overlay"></div>
-<div class="cart-drawer" id="cart-drawer">
-  <div class="cart-head">
-    <div class="cart-head-left">
-      <div class="cart-head-title">🛒 Корзина <span class="cart-count-pill" id="cart-head-count">0</span></div>
-      <div class="cart-head-sub">Ваши выбранные букеты и подарки</div>
-    </div>
-    <button type="button" class="cart-close" id="cart-close-btn" aria-label="Закрыть корзину">✕</button>
-  </div>
-  <div class="cart-body" id="cart-body">
-    <div class="cart-empty" id="cart-empty-state">
-      <div class="ce-icon-wrap">🌸</div>
-      <h4>Корзина пуста</h4>
-      <p>Добавьте понравившиеся букеты и подарки</p>
-      <button type="button" class="cart-browse-btn" onclick="window.closeCart(); goPage('catalog')">Смотреть каталог</button>
-    </div>
-
-
-    <div id="cart-items-list"></div>
-  </div>
-  <div class="cart-foot" id="cart-foot" style="display:none">
-    <div class="cart-summary">
-      <div class="cart-summary-row"><span>Товаров</span><span id="cart-items-count">0 шт.</span></div>
-      <div class="cart-summary-divider"></div>
-      <div class="cart-summary-row">
-        <span class="cart-total-label">Итого</span>
-        <span class="cart-total-value" id="cart-total">0 сом.</span>
-      </div>
-    </div>
-    <button class="cart-checkout-btn" onclick="cartCheckout()"><span>💬</span>Перейти к оформлению</button>
-    <button class="cart-clear-btn" onclick="clearCartConfirm()">Очистить корзину</button>
-    <p class="cart-note">Свяжемся через @rebuket_admin</p>
-  </div>
-</div>
 
 <!-- HOME -->
 <div id="page-home" class="page active">
@@ -1144,6 +1110,43 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     </div>
     <div class="shop-view-grid" id="shop-view-pubs">
       <div class="loader">🌿 Загружаем публикации…</div>
+    </div>
+  </div>
+</div>
+
+<!-- CART -->
+<div id="page-cart" class="page page-cart">
+  <div class="section">
+    <button type="button" class="back" onclick="goPage('catalog')">← Назад в каталог</button>
+    <div class="cart-page-wrap">
+      <div class="cart-head">
+        <div class="cart-head-left">
+          <div class="cart-head-title">🛒 Корзина <span class="cart-count-pill" id="cart-head-count">0</span></div>
+          <div class="cart-head-sub">Ваши выбранные букеты и подарки</div>
+        </div>
+      </div>
+      <div class="cart-body" id="cart-body">
+        <div class="cart-empty" id="cart-empty-state">
+          <div class="ce-icon-wrap">🌸</div>
+          <h4>Корзина пуста</h4>
+          <p>Добавьте понравившиеся букеты и подарки</p>
+          <button type="button" class="cart-browse-btn" onclick="goPage('catalog')">Смотреть каталог</button>
+        </div>
+        <div id="cart-items-list"></div>
+      </div>
+      <div class="cart-foot" id="cart-foot" style="display:none">
+        <div class="cart-summary">
+          <div class="cart-summary-row"><span>Товаров</span><span id="cart-items-count">0 шт.</span></div>
+          <div class="cart-summary-divider"></div>
+          <div class="cart-summary-row">
+            <span class="cart-total-label">Итого</span>
+            <span class="cart-total-value" id="cart-total">0 сом.</span>
+          </div>
+        </div>
+        <button type="button" class="cart-checkout-btn" onclick="cartCheckout()"><span>💬</span>Перейти к оформлению</button>
+        <button type="button" class="cart-clear-btn" onclick="clearCartConfirm()">Очистить корзину</button>
+        <p class="cart-note">Свяжемся через @rebuket_admin</p>
+      </div>
     </div>
   </div>
 </div>
@@ -2173,25 +2176,11 @@ window.clearCartConfirm = () => {
   if (window._cart.length === 0) return;
   if (confirm('Очистить всю корзину?')) { window.clearCart(); toast('Корзина очищена'); }
 };
-window.openCart = () => {
-  document.getElementById('cart-overlay')?.classList.add('open');
-  document.getElementById('cart-drawer')?.classList.add('open');
-};
-window.closeCart = () => {
-  document.getElementById('cart-overlay')?.classList.remove('open');
-  document.getElementById('cart-drawer')?.classList.remove('open');
-};
-(function initCartDrawer() {
-  const overlay = document.getElementById('cart-overlay');
-  const closeBtn = document.getElementById('cart-close-btn');
-  const close = () => window.closeCart();
-  overlay?.addEventListener('click', close);
-  closeBtn?.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    close();
-  });
-})();
+window.openCart = () => goPage('cart');
+window.closeCart = () => goPage('catalog');
+window.addEventListener('rbt:page', (e) => {
+  if (e.detail === 'cart') updateCartUI();
+});
 window.setCheckoutStep = (step) => {
   [1, 2, 3].forEach(n => {
     const el = document.getElementById('checkout-step-' + n);
@@ -2234,7 +2223,6 @@ window.saveCheckoutStep1 = () => {
 
 window.cartCheckout = () => {
   if (window._cart.length === 0) return;
-  window.closeCart();
   window._checkoutBusy = false;
   document.getElementById('checkout-modal').classList.add('open');
   resetCheckoutForm();
@@ -2649,8 +2637,8 @@ window.completeCheckout = async () => {
     } catch (_) {}
 
     window.closeCheckoutModal();
-    window.closeCart();
     window.clearCart();
+    goPage('catalog');
     toast('✅ Заказ отправлен! Ожидайте подтверждения.', 'success');
   } catch (error) {
     if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = error.message || 'Ошибка отправки заказа'; }
