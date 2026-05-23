@@ -6,8 +6,8 @@ const { createSupabaseClient } = require('../db/supabase');
 let userBot  = null;
 let adminBot = null;
 let shopBot  = null;
-/** Резервная отправка, если polling-бот не поднялся */
-let shopSendOnlyBot = null;
+/** Исходящие сообщения Shop Bot (polling: false — не конфликтует с shopBot) */
+let shopOutboundBot = null;
 /** Резерв таймеров, если колонки в БД ещё не добавлены */
 const shopResponseTimers = new Map();
 /** Заказы, которым shop-бот уже отправил «новый заказ» */
@@ -565,20 +565,34 @@ function getShopBotToken() {
   return (process.env.BOT_TOKEN_SHOP || process.env.SHOP_BOT_TOKEN || '').trim();
 }
 
-function getShopSendBot() {
-  if (shopBot) return shopBot;
+/** Только отправка — всегда отдельный инстанс, не shopBot с polling */
+function ensureShopOutboundBot() {
   const token = getShopBotToken();
   if (!token) return null;
-  if (!shopSendOnlyBot) {
+  if (!shopOutboundBot) {
     try {
-      shopSendOnlyBot = new TG(token, { polling: false });
-      console.log('[getShopSendBot] send-only bot instance');
+      shopOutboundBot = new TG(token, { polling: false });
+      console.log('[shop] outbound bot ready (send-only)');
     } catch (e) {
-      console.error('[getShopSendBot]', e.message);
+      console.error('[ensureShopOutboundBot]', e.message);
       return null;
     }
   }
-  return shopSendOnlyBot;
+  return shopOutboundBot;
+}
+
+async function getShopByTelegramChat(chatId) {
+  const cid = shopChatId(chatId);
+  const db = createSupabaseClient();
+  for (const val of [cid, String(cid)]) {
+    const { data, error } = await db
+      .from('shops')
+      .select('id, phone, shop_name, telegram_chat_id, status')
+      .eq('telegram_chat_id', val)
+      .maybeSingle();
+    if (!error && data) return data;
+  }
+  return null;
 }
 
 function shopChatId(chatId) {
@@ -614,35 +628,65 @@ async function loadActiveShops() {
   return [];
 }
 
+function collectSellerPhoneKeys(items, extraPhones = []) {
+  const wanted = new Set();
+  const sellerPhones = [];
+  const add = (raw) => {
+    const p = (raw || '').toString().trim();
+    if (!p) return;
+    sellerPhones.push(p);
+    const d = phoneDigits(p);
+    if (d) wanted.add(d);
+    for (const v of phoneVariants(p)) {
+      const dv = phoneDigits(v);
+      if (dv) wanted.add(dv);
+    }
+  };
+  for (const it of items) add(it.seller_phone);
+  for (const p of extraPhones) add(p);
+  return { wanted, sellerPhones: [...new Set(sellerPhones)] };
+}
+
+function shopMatchesOrderPhones(shop, wanted) {
+  if (!shop || !wanted.size) return false;
+  const d = phoneDigits(shop.phone);
+  if (d && wanted.has(d)) return true;
+  for (const v of phoneVariants(shop.phone)) {
+    const dv = phoneDigits(v);
+    if (dv && wanted.has(dv)) return true;
+  }
+  return false;
+}
+
 async function resolveShopsForOrder(order) {
   const items = parseOrderItems(order);
-  let sellerPhones = [...new Set(items.map(it => (it.seller_phone || '').toString().trim()).filter(Boolean))];
+  let { wanted, sellerPhones } = collectSellerPhoneKeys(items);
 
-  if (!sellerPhones.length) {
+  if (!wanted.size) {
     const db = createSupabaseClient();
     const ids = items.map(it => it.id || it.pub_id).filter(Boolean);
     if (ids.length) {
       const { data: prods } = await db.from('products').select('seller_phone').in('id', ids);
-      sellerPhones = [...new Set((prods || []).map(p => (p.seller_phone || '').toString().trim()).filter(Boolean))];
+      const extra = (prods || []).map(p => p.seller_phone);
+      ({ wanted, sellerPhones } = collectSellerPhoneKeys(items, extra));
     }
   }
 
-  const wanted = new Set();
-  for (const p of sellerPhones) {
-    const d = phoneDigits(p);
-    if (d) wanted.add(d);
+  const active = await loadActiveShops();
+  const matched = active.filter(s => shopMatchesOrderPhones(s, wanted));
+
+  const linked = matched.filter(s => {
+    const cid = s.telegram_chat_id;
+    return cid != null && String(cid).trim() !== '' && String(cid) !== '0';
+  });
+  const unlinked = matched.filter(s => !linked.includes(s));
+
+  if (sellerPhones.length && !matched.length) {
+    console.log('[resolveShopsForOrder] no shop match. wanted:', [...wanted].join(','),
+      'shops:', active.map(s => phoneDigits(s.phone)).join(','));
   }
 
-  const active = await loadActiveShops();
-  const matched = active.filter(s => {
-    const d = phoneDigits(s.phone);
-    return d && wanted.has(d);
-  });
-
-  const linked = matched.filter(s => s.telegram_chat_id != null && String(s.telegram_chat_id).trim() !== '');
-  const unlinked = matched.filter(s => !s.telegram_chat_id);
-
-  return { items, sellerPhones, matched, linked, unlinked };
+  return { items, sellerPhones, wanted, matched, linked, unlinked };
 }
 
 function shopOrderKeyboard(orderId) {
@@ -684,28 +728,31 @@ function markSentOnce(orderId, type) {
 }
 
 async function sendToShopChat(chatId, text, opts = {}) {
-  const bot = getShopSendBot();
-  if (!bot) throw new Error('BOT_TOKEN_SHOP не задан');
+  const bot = ensureShopOutboundBot();
+  if (!bot) throw new Error('BOT_TOKEN_SHOP не задан на сервере (Railway)');
 
   const cid = shopChatId(chatId);
-  const tries = [
-    () => bot.sendMessage(cid, text, opts),
+  const sendOpts = { disable_web_page_preview: true, ...opts };
+  const plain = String(text).replace(/<[^>]+>/g, '');
+
+  const attempts = [
+    () => bot.sendMessage(cid, text, sendOpts),
+    () => bot.sendMessage(cid, plain, { ...sendOpts, parse_mode: undefined }),
   ];
-  if (opts.parse_mode === 'HTML') {
-    tries.push(() => bot.sendMessage(cid, text.replace(/<[^>]+>/g, ''), { ...opts, parse_mode: undefined }));
-  }
-  if (opts.reply_markup) {
-    tries.push(() => bot.sendMessage(cid, text, { parse_mode: opts.parse_mode, disable_web_page_preview: true }));
+  if (sendOpts.reply_markup) {
+    attempts.push(() => bot.sendMessage(cid, plain, {
+      disable_web_page_preview: true,
+      reply_markup: sendOpts.reply_markup,
+    }));
   }
 
   let lastErr;
-  for (const fn of tries) {
+  for (const fn of attempts) {
     try {
-      const msg = await fn();
-      return msg;
+      return await fn();
     } catch (e) {
       lastErr = e;
-      console.log('[sendToShopChat] chat', cid, e.message);
+      console.log('[sendToShopChat]', cid, e.message);
     }
   }
   throw lastErr || new Error('sendToShopChat failed');
@@ -733,8 +780,11 @@ function phoneVariants(phone) {
   const set = new Set([raw, d, phoneDigits(phone)].filter(Boolean));
   if (d) {
     set.add('+' + d);
-    if (!d.startsWith('996') && d.length >= 9) set.add('+996' + d.slice(-9));
-    if (d.startsWith('996')) set.add('+' + d);
+    const local9 = d.length > 9 ? d.slice(-9) : d;
+    set.add('+992' + local9);
+    set.add('992' + local9);
+    set.add('+996' + local9);
+    set.add('996' + local9);
   }
   return [...set];
 }
@@ -1065,82 +1115,81 @@ async function handleOrderCallback(callbackQuery) {
 // ─────────────────────────────────────────────
 // 🏪 Уведомление продавцу когда админ подтвердил оплату
 // ─────────────────────────────────────────────
-async function notifySellerAboutOrder(order) {
-  if (!order) return 0;
-
-  if (!getShopBotToken()) {
-    console.error('[notifySellerAboutOrder] BOT_TOKEN_SHOP не задан');
-    await notifyAdminShopsNotLinked(order, { noBot: [true] });
-    return 0;
-  }
-  ensureShopBot();
-
-  const { items, sellerPhones, matched, linked, unlinked } = await resolveShopsForOrder(order);
-
-  if (!sellerPhones.length) {
-    console.log('[notifySellerAboutOrder] No seller phones', order.id);
-    await notifyAdminShopsNotLinked(order, { noChatId: [{ phone: '—', shop_name: 'нет seller_phone в заказе' }] });
-    return 0;
-  }
-
-  if (!matched.length) {
-    console.log('[notifySellerAboutOrder] No active shops for:', sellerPhones.join(', '));
-    await notifyAdminShopsNotLinked(order, {
-      noChatId: sellerPhones.map(p => ({ phone: p, shop_name: 'магазин не найден в shops' })),
-    });
-    return 0;
-  }
-
-  if (!linked.length) {
-    console.log('[notifySellerAboutOrder] Shops not linked to bot:', unlinked.map(s => s.phone).join(', '));
-    await notifyAdminShopsNotLinked(order, { noChatId: unlinked.length ? unlinked : matched });
-    return 0;
-  }
-
+function buildShopNewOrderMessage(order, items) {
   const orderRef = String(order.id).slice(0, 8);
   const itemsList = items.map(it => `• ${escHtml(it.title || 'Товар')} ×${it.qty || 1}`).join('\n');
   const total = (Number(order.total) || 0).toLocaleString('ru');
   const rejectMins = Math.round(SHOP_REJECT_MS / 60000);
   const remindMins = Math.round(SHOP_REMINDER_MS / 60000);
-
   let message =
-    `🛒 <b>Новый заказ #${orderRef} для вашего магазина!</b>\n\n` +
+    `🛒 <b>Новый заказ #${orderRef}</b>\n\n` +
     `📦 <b>Товары:</b>\n${itemsList}\n\n` +
     `💰 <b>Сумма:</b> ${total} сом\n` +
     `🚚 <b>Доставка:</b> ${escHtml(order.delivery_type || '—')}\n`;
   if (order.fast_order) message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
-  if (order.delivery_time) message += `⏰ Желаемое время: ${escHtml(order.delivery_time)}\n`;
-  message += `\n⏳ Контакты клиента откроются после принятия заказа.\n`;
-  message += `⏱ Ответьте в течение <b>${rejectMins} мин.</b> (напоминание через ${remindMins} мин., иначе заказ отменится).`;
+  if (order.delivery_time) message += `⏰ Время: ${escHtml(order.delivery_time)}\n`;
+  message += `\n⏳ Контакты клиента — после «Принять».\n`;
+  message += `⏱ Ответьте за <b>${rejectMins} мин.</b> (напоминание через ${remindMins} мин.)`;
+  return message;
+}
 
+/** Единая точка: отправить заказ в Shop Bot всем привязанным магазинам */
+async function notifySellerAboutOrder(order) {
+  if (!order?.id) return 0;
+
+  const token = getShopBotToken();
+  if (!token) {
+    console.error('[shop-order] BOT_TOKEN_SHOP не задан');
+    await notifyAdminShopsNotLinked(order, { noBot: [true] });
+    return 0;
+  }
+  if (!ensureShopOutboundBot()) {
+    await notifyAdminShopsNotLinked(order, { noBot: [true] });
+    return 0;
+  }
+  initShopBot();
+
+  const { items, sellerPhones, matched, linked, unlinked } = await resolveShopsForOrder(order);
+
+  if (!sellerPhones.length) {
+    await notifyAdminShopsNotLinked(order, { noChatId: [{ phone: '—', shop_name: 'нет seller_phone в заказе' }] });
+    return 0;
+  }
+  if (!matched.length) {
+    await notifyAdminShopsNotLinked(order, {
+      noChatId: sellerPhones.map(p => ({ phone: p, shop_name: 'нет в таблице shops (active)' })),
+    });
+    return 0;
+  }
+  if (!linked.length) {
+    await notifyAdminShopsNotLinked(order, { noChatId: unlinked.length ? unlinked : matched });
+    return 0;
+  }
+
+  const message = buildShopNewOrderMessage(order, items);
   const keyboard = shopOrderKeyboard(order.id);
   const failed = [];
   let sent = 0;
 
   for (const shop of linked) {
+    const chatId = shopChatId(shop.telegram_chat_id);
     try {
-      await sendToShopChat(shop.telegram_chat_id, message, { parse_mode: 'HTML', reply_markup: keyboard });
-      console.log('[notifySellerAboutOrder] OK', order.id, shop.phone, 'chat', shop.telegram_chat_id);
+      await sendToShopChat(chatId, message, { parse_mode: 'HTML', reply_markup: keyboard });
+      console.log('[shop-order] delivered', order.id, shop.shop_name || shop.phone, 'chat', chatId);
       sent++;
     } catch (e) {
-      console.error('[notifySellerAboutOrder] send failed', shop.phone, e.message);
+      console.error('[shop-order] send fail', shop.phone, chatId, e.message);
       failed.push(shop);
     }
   }
 
-  if (failed.length) {
-    await notifyAdminShopsNotLinked(order, { noChatId: failed });
-  }
-  if (!sent) {
-    console.error('[notifySellerAboutOrder] No shop received order', order.id);
-    return 0;
-  }
+  if (failed.length) await notifyAdminShopsNotLinked(order, { noChatId: failed });
+  if (!sent) return 0;
 
   markShopOrderNotified(order.id);
-  try {
-    await setShopResponseTimer(order.id);
-  } catch (e) {
-    console.error('[notifySellerAboutOrder] setShopResponseTimer:', e.message);
+  const timer = await setShopResponseTimer(order.id);
+  if (!timer?.start) {
+    console.error('[shop-order] timer not saved — выполните migrations/SUPABASE_RUN_THIS.sql');
   }
   return sent;
 }
@@ -1186,6 +1235,7 @@ function initBots() {
   if (process.env.ADMIN_CHAT_ID)   adminChatIds.add(process.env.ADMIN_CHAT_ID);
   initUserBot();
   initAdminBot();
+  ensureShopOutboundBot();
   initShopBot();
   startAutoConfirmInterval();
   startShopOrderTimeoutInterval();
@@ -1846,7 +1896,8 @@ function initShopBot() {
   shopBot.onText(/\/logout/, async (msg) => {
     const chatId = msg.chat.id;
     try {
-      await getDb().from('shops').update({ telegram_chat_id: null }).eq('telegram_chat_id', chatId);
+      const cid = shopChatId(chatId);
+      await getDb().from('shops').update({ telegram_chat_id: null }).eq('telegram_chat_id', cid);
       shopAuthState.delete(chatId);
       await shopBot.sendMessage(chatId, '✅ Вы вышли из аккаунта. Отправьте /start чтобы войти снова.', { reply_markup: { remove_keyboard: true } });
     } catch (e) { console.error('[shopBot /logout]', e.message); }
@@ -1875,7 +1926,7 @@ function initShopBot() {
       } else if (state.step === 'password') {
         const password = msg.text.trim();
         try { await shopBot.deleteMessage(chatId, msg.message_id); } catch(_) {}
-        await handlePasswordInput(chatId, password, state.phone);
+        await handlePasswordInput(chatId, password, state.phone, state.shopId);
       }
       return;
     }
@@ -1908,7 +1959,7 @@ function initShopBot() {
         shopAuthState.delete(chatId);
         return;
       }
-      shopAuthState.set(chatId, { step: 'password', phone: shop.phone });
+      shopAuthState.set(chatId, { step: 'password', phone: shop.phone, shopId: shop.id });
       await shopBot.sendMessage(chatId,
         `✅ Магазин найден: <b>${shop.shop_name || shop.phone}</b>\n\n🔒 Шаг 2/2: отправьте <b>пароль</b>.\n\n<i>Сообщение с паролем будет удалено автоматически.</i>`,
         { parse_mode: 'HTML', reply_markup: { remove_keyboard: true } }
@@ -1919,10 +1970,12 @@ function initShopBot() {
     }
   }
 
-  async function handlePasswordInput(chatId, password, phone) {
+  async function handlePasswordInput(chatId, password, phone, shopId) {
     try {
       const db = getDb();
-      const { data: shop } = await db.from('shops').select('phone, shop_name, password_hash, status').eq('phone', phone).single();
+      let q = db.from('shops').select('id, phone, shop_name, password_hash, status');
+      q = shopId ? q.eq('id', shopId) : q.eq('phone', phone);
+      const { data: shop } = await q.single();
       if (!shop || !shop.password_hash) {
         await shopBot.sendMessage(chatId, '❌ Магазин не найден или пароль не задан.');
         shopAuthState.delete(chatId);
@@ -1935,11 +1988,11 @@ function initShopBot() {
         return;
       }
       const chatIdNum = shopChatId(chatId);
-      const { error: upErr } = await db.from('shops').update({ telegram_chat_id: chatIdNum }).eq('phone', shop.phone);
+      const { error: upErr } = await db.from('shops').update({ telegram_chat_id: chatIdNum }).eq('id', shop.id);
       if (upErr) {
         console.error('[shopBot] telegram_chat_id save:', upErr.message);
         await shopBot.sendMessage(chatId,
-          '❌ Не удалось сохранить подключение в базе.\n\nАдмину: выполните migrations/011_shops_telegram_chat_id.sql в Supabase.',
+          '❌ Не удалось сохранить подключение.\n\nАдмину: выполните migrations/SUPABASE_RUN_THIS.sql в Supabase.',
           { parse_mode: 'HTML' }
         );
         shopAuthState.delete(chatId);
@@ -1988,7 +2041,7 @@ function initShopBot() {
       const buffer = await downloadBotFile(shopBot, photo.file_id);
       const { uploadPhoto } = require('../db/supabase');
       const photoUrl = await uploadPhoto(buffer, `delivery-${orderId}-${Date.now()}.jpg`, 'image/jpeg');
-      const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', chatId).single();
+      const shop = await getShopByTelegramChat(chatId);
 
       const orderForNotify = { ...orderRow, delivery_photo_url: photoUrl, status: 'ready' };
       let notifyResult = { ok: false, reason: 'no_chat_id' };
@@ -2036,7 +2089,7 @@ function initShopBot() {
       const newStatus = refundAction === 'approve' ? 'refunded' : 'refund_disputed';
       try {
         const db = getDb();
-        const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', q.message.chat.id).single();
+        const shop = await getShopByTelegramChat(q.message.chat.id);
         if (!shop) { await shopBot.answerCallbackQuery(q.id, { text: 'Сначала /start', show_alert: true }); return; }
         const { data: updated } = await db.from('orders').update({ status: newStatus }).eq('id', orderId).select().single();
         await shopBot.answerCallbackQuery(q.id, { text: refundAction === 'approve' ? '✅ Возврат одобрен' : '⚠️ Возврат оспорен' });
@@ -2068,7 +2121,7 @@ function initShopBot() {
     if (action === 'ready') {
       try {
         const db = getDb();
-        const { data: shop } = await db.from('shops').select('phone').eq('telegram_chat_id', q.message.chat.id).single();
+        const shop = await getShopByTelegramChat(q.message.chat.id);
         if (!shop) { await shopBot.answerCallbackQuery(q.id, { text: 'Сначала /start', show_alert: true }); return; }
         shopPendingPhoto.set(q.message.chat.id, orderId);
         await shopBot.answerCallbackQuery(q.id, { text: '📸 Отправьте фото готового букета' });
@@ -2092,7 +2145,7 @@ function initShopBot() {
 
     try {
       const db = getDb();
-      const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', q.message.chat.id).single();
+      const shop = await getShopByTelegramChat(q.message.chat.id);
       if (!shop) { await shopBot.answerCallbackQuery(q.id, { text: 'Сначала авторизуйтесь через /start', show_alert: true }); return; }
 
       const { data: order } = await db.from('orders').select('status, items, customer_phone, customer_address').eq('id', orderId).single();
