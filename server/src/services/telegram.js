@@ -959,7 +959,7 @@ async function notifyAdminAboutOrder(order) {
   const payerNote = order.delivery_payer === 'fixed'
     ? ' (включена в сумму)'
     : order.delivery_payer === 'buyer'
-      ? ' (оплата водителю)'
+      ? ' (оплатит получатель)'
       : '';
   const adminUrl = `${getMiniAppUrl()}/#admin`;
 
