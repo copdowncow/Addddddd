@@ -666,12 +666,12 @@ nav {
 .cart-drawer { position: fixed; top: 0; right: -100%; bottom: 0; width: 100%; max-width: 440px; background: #fff; z-index: 1101; display: flex; flex-direction: column; box-shadow: -16px 0 80px rgba(0,0,0,.18); transition: right .4s cubic-bezier(.22,1,.36,1); border-radius: 24px 0 0 24px; }
 .cart-drawer.open { right: 0; }
 .cart-head { display: flex; align-items: center; justify-content: space-between; padding: 24px 26px 20px; background: linear-gradient(135deg,#0f1117 0%,#1e2330 100%); border-radius: 24px 0 0 0; flex-shrink: 0; position: relative; overflow: hidden; }
-.cart-head::before { content: ''; position: absolute; top: -30px; right: -30px; width: 140px; height: 140px; background: radial-gradient(circle,rgba(34,160,91,.25) 0%,transparent 70%); border-radius: 50%; }
+.cart-head::before { content: ''; position: absolute; top: -30px; right: -30px; width: 140px; height: 140px; background: radial-gradient(circle,rgba(34,160,91,.25) 0%,transparent 70%); border-radius: 50%; pointer-events: none; }
 .cart-head-left { display: flex; flex-direction: column; gap: 4px; z-index: 1; }
 .cart-head-title { font-family: 'Cormorant Garamond',serif; font-size: 1.6rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 10px; }
 .cart-head-sub { font-size: .78rem; color: rgba(255,255,255,.45); font-weight: 400; }
 .cart-count-pill { display: inline-flex; align-items: center; justify-content: center; background: var(--green); color: #fff; font-size: .7rem; font-weight: 700; min-width: 22px; height: 22px; border-radius: 50px; padding: 0 6px; }
-.cart-close { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.15); background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); font-size: .9rem; transition: all .2s; z-index: 1; display: flex; align-items: center; justify-content: center; }
+.cart-close { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.15); background: rgba(255,255,255,.08); color: rgba(255,255,255,.7); font-size: .9rem; transition: all .2s; z-index: 5; position: relative; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .cart-close:hover { background: rgba(255,255,255,.18); color: #fff; border-color: rgba(255,255,255,.3); }
 .cart-body { flex: 1; overflow-y: auto; padding: 20px 24px 0; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .cart-body::-webkit-scrollbar { width: 4px; }
@@ -719,6 +719,7 @@ nav {
    MODALS
    ============================================================ */
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(3px); }
+#checkout-modal.open { z-index: 1200; }
 .overlay.open { display: flex; }
 .modal { background: #fff; border-radius: 24px; padding: 36px; width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; position: relative; box-shadow: 0 24px 80px rgba(0,0,0,.16); animation: popIn .28s cubic-bezier(.34,1.56,.64,1); }
 @keyframes popIn { from{opacity:0;transform:scale(.92) translateY(10px)} to{opacity:1;transform:none} }
@@ -877,21 +878,21 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
 </nav>
 
 <!-- CART DRAWER -->
-<div class="cart-overlay" id="cart-overlay" onclick="closeCart()"></div>
+<div class="cart-overlay" id="cart-overlay"></div>
 <div class="cart-drawer" id="cart-drawer">
   <div class="cart-head">
     <div class="cart-head-left">
       <div class="cart-head-title">🛒 Корзина <span class="cart-count-pill" id="cart-head-count">0</span></div>
       <div class="cart-head-sub">Ваши выбранные букеты и подарки</div>
     </div>
-    <button class="cart-close" onclick="closeCart()">✕</button>
+    <button type="button" class="cart-close" id="cart-close-btn" aria-label="Закрыть корзину">✕</button>
   </div>
   <div class="cart-body" id="cart-body">
     <div class="cart-empty" id="cart-empty-state">
       <div class="ce-icon-wrap">🌸</div>
       <h4>Корзина пуста</h4>
       <p>Добавьте понравившиеся букеты и подарки</p>
-      <button class="cart-browse-btn" onclick="closeCart(); goPage('catalog')">Смотреть каталог</button>
+      <button type="button" class="cart-browse-btn" onclick="window.closeCart(); goPage('catalog')">Смотреть каталог</button>
     </div>
 
 
@@ -2173,13 +2174,24 @@ window.clearCartConfirm = () => {
   if (confirm('Очистить всю корзину?')) { window.clearCart(); toast('Корзина очищена'); }
 };
 window.openCart = () => {
-  document.getElementById('cart-overlay').classList.add('open');
-  document.getElementById('cart-drawer').classList.add('open');
+  document.getElementById('cart-overlay')?.classList.add('open');
+  document.getElementById('cart-drawer')?.classList.add('open');
 };
 window.closeCart = () => {
-  document.getElementById('cart-overlay').classList.remove('open');
-  document.getElementById('cart-drawer').classList.remove('open');
+  document.getElementById('cart-overlay')?.classList.remove('open');
+  document.getElementById('cart-drawer')?.classList.remove('open');
 };
+(function initCartDrawer() {
+  const overlay = document.getElementById('cart-overlay');
+  const closeBtn = document.getElementById('cart-close-btn');
+  const close = () => window.closeCart();
+  overlay?.addEventListener('click', close);
+  closeBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+  });
+})();
 window.setCheckoutStep = (step) => {
   [1, 2, 3].forEach(n => {
     const el = document.getElementById('checkout-step-' + n);
@@ -2448,19 +2460,28 @@ window.closeCheckoutModal = () => {
   closeModal('checkout-modal');
 };
 
+const setCheckoutInput = (id, value) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.type === 'checkbox') el.checked = !!value;
+  else el.value = value ?? '';
+};
+
 window.resetCheckoutForm = () => {
-  document.getElementById('checkout-name').value = '';
-  document.getElementById('checkout-phone').value = '';
-  document.getElementById('checkout-telegram').value = '';
-  document.getElementById('checkout-address').value = '';
-  document.getElementById('checkout-another-person').checked = false;
-  document.getElementById('another-person-fields').style.display = 'none';
-  document.getElementById('customer-address-group').style.display = 'block';
-  document.getElementById('checkout-receiver-name').value = '';
-  document.getElementById('checkout-receiver-phone').value = '';
-  document.getElementById('checkout-receiver-address').value = '';
-  document.getElementById('checkout-fast-order').checked = false;
-  document.getElementById('checkout-delivery-time').value = '';
+  setCheckoutInput('checkout-name', '');
+  setCheckoutInput('checkout-phone', '');
+  setCheckoutInput('checkout-telegram', '');
+  setCheckoutInput('checkout-address', '');
+  setCheckoutInput('checkout-another-person', false);
+  const anotherFields = document.getElementById('another-person-fields');
+  if (anotherFields) anotherFields.style.display = 'none';
+  const addrGroup = document.getElementById('customer-address-group');
+  if (addrGroup) addrGroup.style.display = 'block';
+  setCheckoutInput('checkout-receiver-name', '');
+  setCheckoutInput('checkout-receiver-phone', '');
+  setCheckoutInput('checkout-receiver-address', '');
+  setCheckoutInput('checkout-fast-order', false);
+  setCheckoutInput('checkout-delivery-time', '');
   window._checkoutForm = null;
   window._checkoutBusy = false;
   setCheckoutStep(1);
@@ -2627,7 +2648,8 @@ window.completeCheckout = async () => {
       }
     } catch (_) {}
 
-    closeCheckoutModal();
+    window.closeCheckoutModal();
+    window.closeCart();
     window.clearCart();
     toast('✅ Заказ отправлен! Ожидайте подтверждения.', 'success');
   } catch (error) {
