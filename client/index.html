@@ -2478,7 +2478,26 @@ window.completeCheckout = async () => {
     if (!response.ok) {
       throw new Error(result.error || 'Ошибка отправки заказа');
     }
-    
+
+    try {
+      const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+      const orderId = result.order?.id;
+      if (tgUser?.id && orderId) {
+        await fetch('/api/telegram/link-customer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: tgUser.id,
+            username: tgUser.username ? '@' + tgUser.username : null,
+            phone: phone,
+            order_id: orderId,
+          }),
+        });
+      } else if (tgUser?.id) {
+        await window.linkTelegramCustomer(phone);
+      }
+    } catch (_) {}
+
     document.getElementById('checkout-modal').classList.remove('open');
     window.clearCart();
     toast('✅ Заказ отправлен! Ожидайте подтверждения.', 'success');

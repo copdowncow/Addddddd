@@ -181,17 +181,16 @@ async function savePhoneMapping(phone, chatId, username) {
 // ─────────────────────────────────────────────
 // 🔗 Привязать chat_id к существующему заказу (если ещё не привязан)
 // ─────────────────────────────────────────────
-async function patchOrderChatId(orderId, chatId) {
+async function patchOrderChatId(orderId, chatId, { force = false } = {}) {
   if (!orderId || !chatId) return;
   try {
     const { createSupabaseClient } = require('../db/supabase');
     const db = createSupabaseClient();
-    await db
-      .from('orders')
-      .update({ customer_chat_id: chatId })
-      .eq('id', orderId)
-      .is('customer_chat_id', null); // только если ещё не привязан
-    console.log('[patchOrderChatId] Patched order', orderId, 'with chat_id', chatId);
+    const cid = Number(chatId);
+    let q = db.from('orders').update({ customer_chat_id: cid }).eq('id', orderId);
+    if (!force) q = q.is('customer_chat_id', null);
+    await q;
+    console.log('[patchOrderChatId] Patched order', orderId, '->', cid, force ? '(force)' : '');
   } catch (e) {
     console.error('[patchOrderChatId] Error:', e.message);
   }
@@ -224,21 +223,35 @@ async function registerCustomerFromTelegram({ chatId, username, phone, orderId }
     await saveUsernameMapping(normUser, cid);
   }
   if (phone) await savePhoneMapping(phone, cid, normUser);
-  if (orderId) await patchOrderChatId(orderId, cid);
+  if (orderId) await patchOrderChatId(orderId, cid, { force: true });
   return cid;
 }
 
 async function trySendToCustomer(chatId, text, options = {}) {
-  if (!userBot && !ensureUserBot()) return { ok: false, reason: 'no_bot', error: 'userBot unavailable' };
   if (!chatId) return { ok: false, reason: 'no_chat_id' };
+  if (!userBot && !ensureUserBot() && !getUserBotToken()) {
+    return { ok: false, reason: 'no_bot', error: 'userBot unavailable' };
+  }
+  const cid = Number(chatId);
   try {
-    await userBot.sendMessage(Number(chatId), text, { parse_mode: 'HTML', ...options });
-    return { ok: true, chatId: Number(chatId) };
-  } catch (e) {
-    const err = e.message || String(e);
-    const needsStart = /403|blocked|initiate|chat not found|user is deactivated|PEER_ID_INVALID/i.test(err);
-    console.error('[trySendToCustomer] Failed:', chatId, err);
-    return { ok: false, reason: needsStart ? 'needs_start' : 'send_failed', error: err, needsStart };
+    await telegramSendMessageHttp(cid, text, { parse_mode: 'HTML', ...options });
+    return { ok: true, chatId: cid };
+  } catch (httpErr) {
+    if (!userBot) {
+      const err = httpErr.message || String(httpErr);
+      const needsStart = httpErr.code === 403 || /403|blocked|initiate|chat not found|deactivated|PEER_ID_INVALID/i.test(err);
+      console.error('[trySendToCustomer] HTTP failed:', chatId, err);
+      return { ok: false, reason: needsStart ? 'needs_start' : 'send_failed', error: err, needsStart };
+    }
+    try {
+      await userBot.sendMessage(cid, text, { parse_mode: 'HTML', ...options });
+      return { ok: true, chatId: cid };
+    } catch (e) {
+      const err = e.message || String(e);
+      const needsStart = /403|blocked|initiate|chat not found|user is deactivated|PEER_ID_INVALID/i.test(err);
+      console.error('[trySendToCustomer] Failed:', chatId, err);
+      return { ok: false, reason: needsStart ? 'needs_start' : 'send_failed', error: err, needsStart };
+    }
   }
 }
 
@@ -264,28 +277,73 @@ function downloadUrlBuffer(url) {
 
 const PHOTO_FILE_OPTS = { filename: 'bouquet.jpg', contentType: 'image/jpeg' };
 
+function getUserBotToken() {
+  return process.env.BOT_TOKEN_USER || '';
+}
+
+async function telegramUserApi(method, init) {
+  const token = getUserBotToken();
+  if (!token) throw new Error('BOT_TOKEN_USER not set');
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, init);
+  const json = await res.json();
+  if (!json.ok) {
+    const err = new Error(json.description || 'Telegram API error');
+    err.code = json.error_code;
+    throw err;
+  }
+  return json.result;
+}
+
+async function telegramSendPhotoHttp(chatId, buffer, options = {}) {
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('photo', new Blob([buffer], { type: 'image/jpeg' }), 'bouquet.jpg');
+  if (options.caption) form.append('caption', String(options.caption).slice(0, 1024));
+  if (options.parse_mode) form.append('parse_mode', options.parse_mode);
+  return telegramUserApi('sendPhoto', { method: 'POST', body: form });
+}
+
+async function telegramSendMessageHttp(chatId, text, options = {}) {
+  return telegramUserApi('sendMessage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: String(text).slice(0, 4096),
+      parse_mode: options.parse_mode || 'HTML',
+      disable_web_page_preview: options.disable_web_page_preview !== false,
+      reply_markup: options.reply_markup,
+    }),
+  });
+}
+
 async function downloadBotFile(bot, fileId) {
   const fileLink = await bot.getFileLink(fileId);
   return downloadUrlBuffer(fileLink);
 }
 
 async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
-  if (!userBot && !ensureUserBot()) return { ok: false, error: 'user_bot_unavailable' };
   if (!chatId || !photoSource) return { ok: false, error: 'no_chat_or_photo' };
+  if (!userBot && !ensureUserBot() && !getUserBotToken()) {
+    return { ok: false, error: 'user_bot_unavailable' };
+  }
   const cid = Number(chatId);
-  const { Readable } = require('stream');
 
   async function sendBuffer(buf) {
     if (!buf || !buf.length) throw new Error('empty buffer');
-    const stream = Readable.from(buf);
     try {
-      await userBot.sendPhoto(cid, stream, options, PHOTO_FILE_OPTS);
-      return true;
-    } catch (e1) {
-      console.log('[sendPhotoToCustomer] sendPhoto stream failed:', e1.message);
-      const stream2 = Readable.from(buf);
-      await userBot.sendDocument(cid, stream2, options, PHOTO_FILE_OPTS);
-      return true;
+      await telegramSendPhotoHttp(cid, buf, options);
+      return;
+    } catch (httpErr) {
+      console.log('[sendPhotoToCustomer] HTTP sendPhoto failed:', httpErr.message);
+      if (!userBot) throw httpErr;
+      try {
+        await userBot.sendPhoto(cid, buf, options, PHOTO_FILE_OPTS);
+        return;
+      } catch (e1) {
+        console.log('[sendPhotoToCustomer] lib sendPhoto failed:', e1.message);
+        await userBot.sendDocument(cid, buf, options, PHOTO_FILE_OPTS);
+      }
     }
   }
 
@@ -297,7 +355,8 @@ async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
     const url = String(photoSource).trim();
     if (!url) return { ok: false, error: 'empty_url' };
     try {
-      await userBot.sendPhoto(cid, url, options);
+      if (userBot) await userBot.sendPhoto(cid, url, options);
+      else throw new Error('no lib bot');
       return { ok: true };
     } catch (urlErr) {
       console.log('[sendPhotoToCustomer] URL failed, download buffer:', urlErr.message);
@@ -307,7 +366,7 @@ async function sendPhotoToCustomer(chatId, photoSource, options = {}) {
     }
   } catch (e) {
     console.error('[sendPhotoToCustomer] Failed:', cid, e.message);
-    return { ok: false, error: e.message };
+    return { ok: false, error: e.message, code: e.code };
   }
 }
 
@@ -823,10 +882,12 @@ function initUserBot() {
         }
         await db.from('orders').update({ customer_chat_id: chatId }).eq('id', orderId);
         const fresh = { ...order, customer_chat_id: chatId };
-        if (order.status === 'ready' && order.delivery_photo_url) {
-          await notifyCustomerOrderReady(fresh, null, null, order.delivery_photo_url);
+        if (order.delivery_photo_url && ['ready', 'delivered'].includes(order.status)) {
+          const photoRes = await notifyCustomerOrderReady(fresh, null, null, order.delivery_photo_url);
           await userBot.sendMessage(chatId,
-            `✅ <b>Аккаунт привязан!</b> Фото готового букета отправлено выше.\n\n📦 Заказ #${orderId}`,
+            photoRes.ok
+              ? `✅ <b>Аккаунт привязан!</b> Фото букета отправлено выше.\n\n📦 Заказ #${orderId}`
+              : `✅ <b>Аккаунт привязан к заказу #${orderId}</b>.\n\nУведомления о статусе будут приходить сюда.`,
             { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '🌸 Открыть ReBuket', url: appUrl }]] } }
           );
         } else if (['payment_confirmed', 'seller_accepted', 'preparing', 'ready', 'delivered'].includes(order.status)) {
@@ -1523,46 +1584,43 @@ function initShopBot() {
     shopPendingPhoto.delete(chatId);
 
     try {
+      const db = getDb();
+      const { data: orderRow } = await db.from('orders').select('*').eq('id', orderId).single();
+      if (!orderRow) {
+        await shopBot.sendMessage(chatId, '❌ Заказ не найден.');
+        return;
+      }
+
       const photo = msg.photo[msg.photo.length - 1];
       const buffer = await downloadBotFile(shopBot, photo.file_id);
       const { uploadPhoto } = require('../db/supabase');
       const photoUrl = await uploadPhoto(buffer, `delivery-${orderId}-${Date.now()}.jpg`, 'image/jpeg');
-      const db = getDb();
-      const { data: updated } = await db.from('orders')
-        .update({ status: 'ready', delivery_photo_url: photoUrl })
-        .eq('id', orderId)
-        .select()
-        .single();
       const { data: shop } = await db.from('shops').select('phone, shop_name').eq('telegram_chat_id', chatId).single();
 
-      let notifyResult = { ok: false, reason: 'no_order' };
-      if (updated) {
-        try {
-          notifyResult = await notifyCustomerOrderReady(updated, shop, buffer, photoUrl);
-        } catch (e) {
-          console.log('[shopBot photo] notify customer:', e.message);
-          notifyResult = { ok: false, reason: 'send_failed', error: e.message };
-        }
+      const orderForNotify = { ...orderRow, delivery_photo_url: photoUrl, status: 'ready' };
+      let notifyResult = { ok: false, reason: 'no_chat_id' };
+      try {
+        notifyResult = await notifyCustomerOrderReady(orderForNotify, shop, buffer, photoUrl);
+      } catch (e) {
+        console.error('[shopBot photo] notify customer:', e.message);
+        notifyResult = { ok: false, reason: 'send_failed', error: e.message };
       }
+
+      await db.from('orders')
+        .update({ status: 'ready', delivery_photo_url: photoUrl })
+        .eq('id', orderId);
 
       const botUser = getBotUsername();
       const customerLink = buildCustomerBotLink(orderId);
-      let shopReply;
-      if (notifyResult.ok) {
-        shopReply = notifyResult.textOnly
-          ? `✅ Клиенту отправлено текстовое уведомление (фото — по ссылке). Заказ #${orderId} — «📦 Готов».`
-          : `✅ Фото отправлено клиенту. Заказ #${orderId} помечен как «📦 Готов».`;
-      } else if (notifyResult.reason === 'no_chat_id' || notifyResult.reason === 'needs_start') {
-        shopReply =
-          `⚠️ Заказ #${orderId} помечен «Готов», но клиент <b>не подключён к боту</b>.\n\n` +
-          `Попросите клиента открыть @${botUser} и нажать <b>Start</b>:\n` +
-          `<a href="${customerLink}">${customerLink}</a>\n\n` +
-          `После этого отправьте фото ещё раз (кнопка «Готов» → фото).`;
+      let shopReply = `✅ <b>Заказ #${orderId}</b> — статус «📦 Готов», фото сохранено.`;
+      if (notifyResult.ok && !notifyResult.textOnly) {
+        shopReply += '\n\n📲 Фото доставлено клиенту в Telegram.';
+      } else if (notifyResult.ok && notifyResult.textOnly) {
+        shopReply += '\n\n📲 Клиенту отправлено уведомление с ссылкой на фото.';
       } else {
-        shopReply =
-          `⚠️ Заказ #${orderId} помечен «Готов», фото клиенту не доставлено.\n` +
-          (notifyResult.error ? `\n<i>${escHtml(String(notifyResult.error).slice(0, 120))}</i>\n` : '') +
-          `\nСсылка для клиента: <a href="${customerLink}">${customerLink}</a>`;
+        shopReply +=
+          `\n\n📲 Клиент получит фото после открытия бота @${botUser} (кнопка Start):\n` +
+          `<a href="${customerLink}">${customerLink}</a>`;
       }
 
       await shopBot.sendMessage(chatId, shopReply, {
@@ -1721,17 +1779,18 @@ function initShopBot() {
 // ─────────────────────────────────────────────
 async function resolveCustomerChatId(order) {
   if (!order) return null;
-  const stored = order.customer_chat_id != null && order.customer_chat_id !== ''
-    ? Number(order.customer_chat_id)
-    : null;
-  if (stored && !Number.isNaN(stored)) return stored;
 
   const resolved = await resolveChatId({
     phone: order.customer_phone,
     username: order.customer_telegram,
     chatId: order.customer_chat_id
   });
-  if (!resolved) return null;
+  if (!resolved) {
+    const stored = order.customer_chat_id != null && order.customer_chat_id !== ''
+      ? Number(order.customer_chat_id) : null;
+    if (stored && !Number.isNaN(stored)) return stored;
+    return null;
+  }
 
   const cid = Number(resolved);
   try {
@@ -1947,24 +2006,43 @@ function registerCustomerOrderHandlers() {
       }
 
       if (action === 'confirm') {
-        if (!['delivered', 'confirmed_received'].includes(order.status)) {
-          await userBot.sendMessage(chatId, 'ℹ️ Подтвердить получение можно только после доставки заказа.').catch(() => {});
-          return;
-        }
         if (order.status === 'confirmed_received') {
           await userBot.sendMessage(chatId, '✅ Вы уже подтвердили получение этого заказа.').catch(() => {});
           return;
         }
+        const canConfirm = ['delivered', 'ready'].includes(order.status);
+        if (!canConfirm) {
+          await userBot.sendMessage(chatId, 'ℹ️ Подтвердить получение можно после доставки заказа магазином.').catch(() => {});
+          return;
+        }
 
-        const { data: updated, error } = await db.from('orders')
-          .update({ status: 'confirmed_received', confirmed_at: new Date().toISOString() })
+        const updatePayload = { status: 'confirmed_received', confirmed_at: new Date().toISOString() };
+        let { data: updated, error } = await db.from('orders')
+          .update(updatePayload)
           .eq('id', orderId)
-          .in('status', ['delivered'])
+          .neq('status', 'confirmed_received')
           .select()
           .maybeSingle();
 
-        if (error || !updated) {
-          console.error('[cust_confirm] update failed:', error?.message, 'status:', order.status);
+        if (error) {
+          console.error('[cust_confirm] update error:', error.message, error.details, error.hint);
+          const { data: retry } = await db.from('orders')
+            .update({ status: 'confirmed_received' })
+            .eq('id', orderId)
+            .neq('status', 'confirmed_received')
+            .select()
+            .maybeSingle();
+          updated = retry;
+          error = null;
+        }
+
+        if (!updated) {
+          const { data: current } = await db.from('orders').select('status').eq('id', orderId).maybeSingle();
+          if (current?.status === 'confirmed_received') {
+            await userBot.sendMessage(chatId, '✅ Вы уже подтвердили получение этого заказа.').catch(() => {});
+            return;
+          }
+          console.error('[cust_confirm] update returned no row, was:', order.status);
           await userBot.sendMessage(chatId, '❌ Не удалось подтвердить заказ. Напишите @rebuket_admin.').catch(() => {});
           return;
         }
@@ -2201,6 +2279,7 @@ module.exports = {
   findShopsBySellerPhones,
   registerCustomerFromTelegram,
   sendCustomerPaymentNotification,
+  trySendToCustomer,
   savePhoneMapping,
   saveUsernameMapping,
   getChatIdByUsername,

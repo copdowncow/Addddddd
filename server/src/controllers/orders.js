@@ -228,13 +228,20 @@ exports.createOrder = async (req, res) => {
 
     if (finalChatId || customerTelegram) {
       try {
-        const { registerCustomerFromTelegram } = require('../services/telegram');
+        const { registerCustomerFromTelegram, trySendToCustomer } = require('../services/telegram');
         await registerCustomerFromTelegram({
           chatId: finalChatId,
           username: customerTelegram,
           phone: phoneWithPlus,
           orderId: data.id,
         });
+        if (finalChatId) {
+          const ping = await trySendToCustomer(
+            finalChatId,
+            `🌸 <b>Заказ #${data.id} принят!</b>\n\nОжидайте подтверждения оплаты администратором.\nМы сообщим о каждом статусе здесь, в Telegram.`
+          );
+          if (!ping.ok) console.log('[createOrder] welcome ping failed:', ping.reason, ping.error);
+        }
       } catch (e) {
         console.log('[createOrder] registerCustomerFromTelegram:', e.message);
       }
