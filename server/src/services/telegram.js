@@ -1708,15 +1708,17 @@ async function notifyProduct(p) {
 
 async function notifyInquiry(inq, productTitle, productSlug, productId) {
   const url = (productSlug || productId) ? `${getMiniAppUrl()}/#product-${productSlug || productId}` : null;
+  const productLine = url
+    ? `🔗 <a href="${url}">${escHtml(url)}</a>`
+    : `📦 ${escHtml(productTitle || '—')}`;
   await sendToAdmins(
     `🛒 <b>Новая заявка!</b>\n─────────────────\n` +
-    `📦 ${escHtml(productTitle || '—')}\n` +
+    `${productLine}\n` +
     `👤 ${escHtml(inq.customer_name || '—')}\n` +
     `📞 <b>${escHtml(phoneDisplay(inq.customer_phone))}</b>\n` +
     `✈️ ${escHtml(inq.customer_telegram || '—')}\n` +
-    `📝 ${escHtml(inq.note || '—')}` +
-    (url ? `\n🔗 <a href="${url}">Открыть объявление</a>` : ''),
-    url ? { reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть объявление', url }]] } } : {}
+    `📝 ${escHtml(inq.note || '—')}`,
+    url ? { reply_markup: { inline_keyboard: [[{ text: '🔗 Открыть букет', url }]] } } : {}
   );
 }
 
@@ -1835,18 +1837,17 @@ async function notifyBuyerInquirySent(d) {
     const parts = [
       '🌸 Здравствуйте! Хочу купить:',
       '',
-      '📦 ' + (d.productTitle || '—'),
+      '🔗 ' + url,
       '📞 Мой телефон: ' + d.customer_phone
     ];
     if (d.customer_name)     parts.push('👤 Имя: '          + d.customer_name);
     if (d.customer_telegram) parts.push('✈️ Telegram: '     + d.customer_telegram);
     if (d.note)              parts.push('📝 Комментарий: '  + d.note);
-    parts.push('', '🔗 ' + url);
     const readyText = parts.join('\n');
     const tgLink = 'https://t.me/' + adminHandle + '?text=' + encodeURIComponent(readyText);
     const text =
       '✅ <b>Ваша заявка принята!</b>\n\n' +
-      '📦 ' + escHtml(d.productTitle || '—') + '\n' +
+      `🔗 <a href="${url}">${escHtml(url)}</a>\n` +
       (price ? '💰 ' + price + '\n' : '') +
       '\nНажмите кнопку ниже — сообщение уже готово:';
     await userBot.sendMessage(d.customer_chat_id, text, {

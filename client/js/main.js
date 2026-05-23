@@ -34,6 +34,17 @@ function priceWithCommission(p) {
   return Math.ceil((Number(p.price) * (1 + getCommission(p.category))).toFixed(2) / 10) * 10;
 }
 
+/** Ссылка на карточку товара (для эко-заказов через Telegram) */
+function productPageUrl(p) {
+  const slug = (p && (p.slug || p.id)) || '';
+  const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
+  return slug ? `${origin}/#product-${slug}` : `${origin}/`;
+}
+
+function ecoTelegramBuyMessage(p) {
+  return 'Здравствуйте, хочу заказать этот букет:\n\n🔗 ' + productPageUrl(p);
+}
+
 function sellerPayoutAmount(p) {
   if (p.seller_payout_amount != null && !Number.isNaN(Number(p.seller_payout_amount))) {
     return Number(p.seller_payout_amount);
@@ -806,7 +817,7 @@ function pCard(p) {
   const shopName = shopCard ? (p.shop_name || 'Магазин') : '';
   const shopPhone = shopCard ? (p.seller_phone || '') : '';
   const shopPhoto = shopCard ? (p.photo_url || p.seller_photo || '') : '';
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''));
+  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent(ecoTelegramBuyMessage(p));
   
   // For shop listings, show shop info with photo instead of description
   const shouldShowShopInfo = shopCard;
@@ -1019,7 +1030,7 @@ function renderDetail(p, el) {
   const shopPhone = p.seller_phone || '';
   const shopPhoto = p.photo_url || p.seller_photo || '';
   const shopCard = isShopListing(p);
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''));
+  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent(ecoTelegramBuyMessage(p));
   const shopAvatarHtml = shopPhoto
     ? '<img src="' + esc(shopPhoto) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover">'
     : '<span style="width:40px;height:40px;border-radius:50%;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:1rem">' + esc(getShopAvatar(shopName)) + '</span>';
@@ -1191,7 +1202,7 @@ window.submitInquiry = async () => {
 
     const NL = '\n';
     let msg = '🌸 Здравствуйте! Хочу купить:' + NL + NL;
-    msg += '📦 ' + title + NL;
+    msg += '🔗 ' + pageUrl + NL;
     msg += '📞 Мой телефон: ' + phone + NL;
     if (name) msg += '👤 Имя: '        + name + NL;
     if (tg)   msg += '✈️ Telegram: '   + tg   + NL;

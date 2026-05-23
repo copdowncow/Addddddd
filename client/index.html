@@ -2704,6 +2704,14 @@ function catEmoji(cat) {
   return '🍰';
 }
 
+function productPageUrl(p) {
+  const slug = p?.slug || p?.id || '';
+  return slug ? `${location.origin}/#product-${slug}` : `${location.origin}/`;
+}
+function ecoTelegramBuyMessage(p) {
+  return 'Здравствуйте, хочу заказать этот букет:\n\n🔗 ' + productPageUrl(p);
+}
+
 window.renderProductCard = (p) => {
   const imgs  = p.photos || [];
   const cat   = p.category || '';
@@ -2739,7 +2747,7 @@ window.renderProductCard = (p) => {
       </div>
       <div class="pc-actions" onclick="event.stopPropagation()">
         ${isEco
-          ? `<a class="pc-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''))}" target="_blank" rel="noopener"><span class="btn-icon">✈️</span> Купить через Telegram</a>`
+          ? `<a class="pc-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent(ecoTelegramBuyMessage(p))}" target="_blank" rel="noopener"><span class="btn-icon">✈️</span> Купить через Telegram</a>`
           : `<button class="pc-cart-btn" onclick="window.cardAddToCart(${pJson}, this)"><span class="btn-icon">🛒</span> Добавить в корзину</button>`
         }
       </div>
@@ -2814,7 +2822,7 @@ window.renderProductDetail = (p) => {
       </div>
       <div class="pd-actions">
         ${isEco
-          ? `<a class="pd-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent('Здравствуйте, хочу заказать этот эко: ' + (p.title || ''))}" target="_blank" rel="noopener"><span style="font-size:1.2rem">✈️</span> Купить через Telegram</a>`
+          ? `<a class="pd-cart-btn btn-tg" onclick="event.stopPropagation()" href="https://t.me/rebuket_admin?text=${encodeURIComponent(ecoTelegramBuyMessage(p))}" target="_blank" rel="noopener"><span style="font-size:1.2rem">✈️</span> Купить через Telegram</a>`
           : `<button class="pd-cart-btn" id="pd-cart-btn" onclick="window.pdAddToCart(this)"><span style="font-size:1.2rem">🛒</span> Добавить в корзину</button>`
         }
         <a class="btn btn-tg" href="https://t.me/rebuket_admin" target="_blank" rel="noopener">💬 Написать в поддержку</a>
