@@ -2403,7 +2403,7 @@ async function notifyCustomerStatusChanged(order, shop) {
       sent = true;
     } catch (e) { console.log('[notifyCustomerStatusChanged]', order.status, e.message); }
   } else if (order.status === 'delivered') {
-    const text = `🚚 <b>Ваш заказ доставлен!</b>\n\nПожалуйста, подтвердите получение в течение <b>2 часов</b>. Если не подтвердите — заказ будет автоматически завершён.\n\n📦 Заказ #${orderId}\n💐 ${shopName}`;
+    const text = `🚚 <b>Ваш заказ доставлен!</b>\n\nПожалуйста, подтвердите получение в течение <b>5 часов</b>. Если не подтвердите — заказ будет автоматически завершён.\n\n📦 Заказ #${orderId}\n💐 ${shopName}`;
     try {
       const opts = {
         parse_mode: 'HTML',
@@ -2872,21 +2872,21 @@ function startShopOrderTimeoutInterval() {
 }
 
 // ─────────────────────────────────────────────
-// ⏱ Авто-подтверждение получения через 2 часа
+// ⏱ Авто-подтверждение получения через 5 часов
 // ─────────────────────────────────────────────
 function startAutoConfirmInterval() {
-  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
   setInterval(async () => {
     try {
       const { createSupabaseClient } = require('../db/supabase');
       const db = createSupabaseClient();
-      const cutoff = new Date(Date.now() - TWO_HOURS_MS).toISOString();
+      const cutoff = new Date(Date.now() - FIVE_HOURS_MS).toISOString();
       const { data: orders } = await db.from('orders')
         .select('id, customer_chat_id').eq('status', 'delivered').lt('delivered_at', cutoff).limit(50);
       for (const o of orders || []) {
         await db.from('orders').update({ status: 'confirmed_received', confirmed_at: new Date().toISOString() }).eq('id', o.id);
         if (o.customer_chat_id && userBot) {
-          await userBot.sendMessage(o.customer_chat_id, `✅ Заказ #${o.id} автоматически подтверждён (прошло 2 часа). Спасибо за покупку!`).catch(_=>{});
+          await userBot.sendMessage(o.customer_chat_id, `✅ Заказ #${o.id} автоматически подтверждён (прошло 5 часов). Спасибо за покупку!`).catch(_=>{});
         }
       }
     } catch (e) { console.log('[auto-confirm interval]', e.message); }
