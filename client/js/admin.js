@@ -741,19 +741,19 @@ async function renderStats() {
         </div>
       </div>
       <div class="stat-box" style="margin-bottom:18px"><h4>🔢 Счётчики ID публикаций</h4>
-        <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;flex-direction:column;gap:12px">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span style="min-width:120px;color:var(--gray)">Душанбе (AB-xxxx):</span>
-            <input type="number" id="counter-dushanbe" placeholder="текущее значение" style="width:120px;padding:6px 10px;border:1.5px solid #e8d8d0;border-radius:8px;font-size:.9rem">
-            <button onclick="saveCounter('dushanbe')" style="padding:7px 14px;background:var(--rose);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">Сохранить</button>
+            <span style="min-width:140px;color:var(--gray);font-weight:500">Душанбе (AB-xxxx):</span>
+            <input type="number" id="counter-dushanbe" placeholder="текущее значение" style="width:140px;padding:8px 12px;border:1.5px solid #e8d8d0;border-radius:10px;font-size:.9rem">
+            <button onclick="saveCounter('dushanbe')" style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;font-size:.88rem">💾 Сохранить</button>
           </div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <span style="min-width:120px;color:var(--gray)">Худжанд (AK-xxxx):</span>
-            <input type="number" id="counter-khujand" placeholder="текущее значение" style="width:120px;padding:6px 10px;border:1.5px solid #e8d8d0;border-radius:8px;font-size:.9rem">
-            <button onclick="saveCounter('khujand')" style="padding:7px 14px;background:var(--rose);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600">Сохранить</button>
+            <span style="min-width:140px;color:var(--gray);font-weight:500">Худжанд (AK-xxxx):</span>
+            <input type="number" id="counter-khujand" placeholder="текущее значение" style="width:140px;padding:8px 12px;border:1.5px solid #e8d8d0;border-radius:10px;font-size:.9rem">
+            <button onclick="saveCounter('khujand')" style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;font-size:.88rem">💾 Сохранить</button>
           </div>
         </div>
-        <div id="counter-msg" style="margin-top:8px;font-size:.82rem;color:var(--gray)"></div>
+        <div id="counter-msg" style="margin-top:10px;font-size:.85rem;color:var(--gray);min-height:20px"></div>
       </div>
       <div class="stat-box"><h4>📅 Заявки за 30 дней</h4>
         ${d.by_day?.length
