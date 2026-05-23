@@ -664,8 +664,13 @@ function wasShopOrderNotified(orderOrId) {
   const id = order ? order.id : orderOrId;
   const sid = String(id);
   if (shopNotifiedOrders.has(sid)) return true;
-  if (order?.shop_response_deadline_at) return true;
+  if (order?.shop_notify_at) return true;
   return false;
+}
+
+/** Таймер/напоминания/автоотклонение — только заказы с реальной отправкой в Shop Bot */
+function isShopTimerEligible(order) {
+  return !!(order && order.shop_notify_at);
 }
 
 function canSendOnce(orderId, type) {
@@ -747,16 +752,18 @@ const SHOP_TIMEOUT_POLL_MS = 30 * 1000;
 const SHOP_TIMEOUT_WAIT_STATUSES = ['payment_confirmed', 'confirmed'];
 
 function shopWaitStartedAt(order) {
-  if (order.shop_response_deadline_at && order.payment_confirmed_at) {
+  if (!isShopTimerEligible(order)) return 0;
+  if (order.shop_response_deadline_at) {
     const end = new Date(order.shop_response_deadline_at).getTime();
-    return end - SHOP_REJECT_MS;
+    if (Number.isFinite(end)) return end - SHOP_REJECT_MS;
   }
-  const t = order.payment_confirmed_at || order.created_at;
+  const t = order.shop_notify_at || order.payment_confirmed_at;
   const ms = t ? new Date(t).getTime() : 0;
   return Number.isFinite(ms) ? ms : 0;
 }
 
 function orderRejectDeadlineMs(order) {
+  if (!isShopTimerEligible(order)) return null;
   const cached = shopResponseTimers.get(String(order.id));
   if (cached?.deadlineMs) return cached.deadlineMs;
   if (order.shop_response_deadline_at) {
@@ -800,13 +807,15 @@ async function setShopResponseTimer(orderId, existingStartIso) {
   cacheShopTimer(orderId, startMs, deadlineMs);
 
   const payloads = [
+    { shop_notify_at: start, payment_confirmed_at: start, shop_response_deadline_at: deadline },
+    { shop_notify_at: start, shop_response_deadline_at: deadline },
     { payment_confirmed_at: start, shop_response_deadline_at: deadline },
     { payment_confirmed_at: start },
   ];
   for (const payload of payloads) {
     const { error } = await db.from('orders').update(payload).eq('id', orderId);
     if (!error) {
-      console.log('[setShopResponseTimer] order', orderId, 'deadline', deadline);
+      console.log('[setShopResponseTimer] order', orderId, 'deadline', deadline, 'shop_notify_at', start);
       return { start, deadline, deadlineMs };
     }
     if (!/column/i.test(error.message || '')) {
@@ -2553,6 +2562,7 @@ function registerCustomerOrderHandlers() {
 // ⏱ Напоминание магазину (5 мин) и автоотклонение (10 мин)
 // ─────────────────────────────────────────────
 async function notifyCustomerShopTimeoutRejected(order) {
+  if (!isShopTimerEligible(order)) return;
   if (!userBot && !ensureUserBot()) return;
   const dedupType = 'customer_shop_timeout_reject';
   if (!canSendOnce(order.id, dedupType)) return;
@@ -2581,6 +2591,7 @@ async function notifyCustomerShopTimeoutRejected(order) {
 
 async function notifyAdminShopTimeoutRejected(order) {
   if (!adminBot) return;
+  if (!isShopTimerEligible(order)) return;
   if (!canSendOnce(order.id, 'admin_shop_timeout_reject')) return;
   const mins = Math.round(SHOP_RESPONSE_TIMEOUT_MS / 60000);
   const text =
@@ -2601,7 +2612,7 @@ async function notifyAdminShopTimeoutRejected(order) {
 
 async function notifyShopsShopReminder(order) {
   if (!getShopBotToken()) return;
-  if (!wasShopOrderNotified(order)) return;
+  if (!isShopTimerEligible(order)) return;
   if (!canSendOnce(order.id, 'shop_reminder_all')) return;
 
   const { linked } = await resolveShopsForOrder(order);
@@ -2633,6 +2644,7 @@ async function notifyShopsShopReminder(order) {
 
 async function notifyAdminShopReminder(order) {
   if (!adminBot) return;
+  if (!isShopTimerEligible(order)) return;
   if (!canSendOnce(order.id, 'admin_shop_reminder')) return;
   const text =
     `⏰ <b>Напоминание: заказ #${order.id}</b>\n\n` +
@@ -2650,7 +2662,7 @@ async function notifyAdminShopReminder(order) {
 
 async function notifyShopsShopTimeoutRejected(order) {
   if (!getShopBotToken()) return;
-  if (!wasShopOrderNotified(order)) return;
+  if (!isShopTimerEligible(order)) return;
   if (!canSendOnce(order.id, 'shop_timeout_reject_all')) return;
 
   const { linked } = await resolveShopsForOrder(order);
@@ -2672,7 +2684,7 @@ async function notifyShopsShopTimeoutRejected(order) {
 }
 
 async function autoRejectShopOrder(db, order) {
-  if (!wasShopOrderNotified(order)) return null;
+  if (!isShopTimerEligible(order)) return null;
   if (!canSendOnce(order.id, 'auto_reject')) return null;
   const mins = Math.round(SHOP_REJECT_MS / 60000);
   const noteLine = `Автоотклонён: магазин не ответил за ${mins} мин.`;
@@ -2714,52 +2726,63 @@ async function processShopOrderTimeouts() {
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
 
-  const { data: expiredByDeadline, error: expErr } = await db
+  let expiredByDeadline = [];
+  const expiredRes = await db
     .from('orders')
     .select('*')
     .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
+    .not('shop_notify_at', 'is', null)
     .not('shop_response_deadline_at', 'is', null)
     .lte('shop_response_deadline_at', nowIso)
     .limit(40);
 
-  if (expErr && !/column/i.test(expErr.message || '')) {
-    console.log('[processShopOrderTimeouts] deadline query:', expErr.message);
+  if (expiredRes.error && /shop_notify_at|column/i.test(expiredRes.error.message || '')) {
+    const legacy = await db
+      .from('orders')
+      .select('*')
+      .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
+      .not('shop_response_deadline_at', 'is', null)
+      .lte('shop_response_deadline_at', nowIso)
+      .limit(40);
+    expiredByDeadline = (legacy.data || []).filter(isShopTimerEligible);
+    if (legacy.error && !/column/i.test(legacy.error.message || '')) {
+      console.log('[processShopOrderTimeouts] deadline query:', legacy.error.message);
+    }
+  } else {
+    if (expiredRes.error && !/column/i.test(expiredRes.error.message || '')) {
+      console.log('[processShopOrderTimeouts] deadline query:', expiredRes.error.message);
+    }
+    expiredByDeadline = expiredRes.data || [];
   }
 
   const rejectedIds = new Set();
   for (const order of expiredByDeadline || []) {
+    if (!isShopTimerEligible(order)) continue;
     const updated = await autoRejectShopOrder(db, order);
     if (updated) rejectedIds.add(order.id);
   }
 
-  const { data: orders, error } = await db
+  let orders = [];
+  const ordersRes = await db
     .from('orders')
     .select('*')
     .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
+    .not('shop_notify_at', 'is', null)
     .limit(80);
 
-  if (error) {
-    console.log('[processShopOrderTimeouts] query error:', error.message);
+  if (ordersRes.error && /shop_notify_at|column/i.test(ordersRes.error.message || '')) {
+    console.log('[processShopOrderTimeouts] shop_notify_at column missing — run migrations/012_shop_notify_at.sql');
     return;
   }
+  if (ordersRes.error) {
+    console.log('[processShopOrderTimeouts] query error:', ordersRes.error.message);
+    return;
+  }
+  orders = ordersRes.data || [];
 
   for (const order of orders || []) {
     if (rejectedIds.has(order.id)) continue;
-
-    if (!wasShopOrderNotified(order)) {
-      if (canSendOnce(order.id, 'shop_notify_retry')) {
-        markSentOnce(order.id, 'shop_notify_retry');
-        try {
-          const sent = await notifySellerAboutOrder(order);
-          if (!sent) continue;
-        } catch (e) {
-          console.log('[processShopOrderTimeouts] notify shop', order.id, e.message);
-          continue;
-        }
-      } else {
-        continue;
-      }
-    }
+    if (!isShopTimerEligible(order)) continue;
 
     let deadline = orderRejectDeadlineMs(order);
     if (!deadline) continue;
@@ -2775,7 +2798,7 @@ async function processShopOrderTimeouts() {
       try { await notifyShopsShopReminder(order); } catch (e) {
         console.log('[processShopOrderTimeouts] shop reminder:', e.message);
       }
-      if (wasShopOrderNotified(order) && canSendOnce(order.id, 'admin_shop_reminder')) {
+      if (isShopTimerEligible(order) && canSendOnce(order.id, 'admin_shop_reminder')) {
         try { await notifyAdminShopReminder(order); } catch (e) {
           console.log('[processShopOrderTimeouts] admin reminder:', e.message);
         }
