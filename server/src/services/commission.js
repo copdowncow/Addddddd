@@ -80,9 +80,11 @@ function effectivePercent(product, shop, settings) {
 // Pick effective pricing mode for a product
 //   Shop / inclusive → listed price is customer price
 //   Legacy products (mode null, eco) → 'exclusive'
-function effectiveMode(product) {
+//   shop — active shop row for seller (covers old products without pricing_mode)
+function effectiveMode(product, shop = null) {
   if (product && product.pricing_mode) return product.pricing_mode;
   if (product && product.listing_type === 'shop') return 'inclusive';
+  if (shop) return 'inclusive';
   return 'exclusive';
 }
 

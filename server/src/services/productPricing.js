@@ -6,7 +6,7 @@ function enrichProductPricing(product, shop = null) {
   if (!product) return null;
   const listed = Number(product.price) || 0;
   const pct = Commission.effectivePercent(product, shop);
-  const mode = Commission.effectiveMode(product);
+  const mode = Commission.effectiveMode(product, shop);
   const br = Commission.calculate(listed, pct, mode);
   return {
     ...product,

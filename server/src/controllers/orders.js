@@ -88,7 +88,7 @@ exports.createOrder = async (req, res) => {
     if (productIds.length > 0) {
       const { data: prods } = await getClient()
         .from('products')
-        .select('id, seller_phone, title, price, commission_percent, pricing_mode')
+        .select('id, seller_phone, title, price, commission_percent, pricing_mode, listing_type')
         .in('id', productIds);
       for (const p of (prods || [])) productById.set(p.id, p);
       const ecoItems = (prods || []).filter(p => {
@@ -116,7 +116,7 @@ exports.createOrder = async (req, res) => {
       const sellerPhone = (it.seller_phone || prod?.seller_phone || '').toString().trim();
       const shop = shopByPhone.get(sellerPhone) || shopByPhone.get(phoneDigits(sellerPhone));
       const pct = Commission.effectivePercent(prod, shop, settings);
-      const mode = Commission.effectiveMode(prod);
+      const mode = Commission.effectiveMode(prod, shop);
       // Trust DB price over client-supplied to prevent tampering
       const listed = Number(prod?.price ?? it.price) || 0;
       const qty = Math.max(1, Number(it.qty || 1));
