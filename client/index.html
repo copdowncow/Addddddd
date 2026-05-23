@@ -726,6 +726,33 @@ nav {
 .modal-x:hover { background: var(--border); color: var(--black); }
 .modal h3 { font-size: 1.4rem; margin-bottom: 8px; }
 
+.pay-bank-card {
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.pay-bank-title {
+  font-size: .9rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: rgba(255,255,255,.92);
+}
+.pay-bank-number {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+  color: #fff;
+}
+.pay-bank-holder {
+  font-size: .75rem;
+  color: rgba(255,255,255,.55);
+  margin-top: 4px;
+}
+
 /* ============================================================
    TOAST
    ============================================================ */
@@ -1536,7 +1563,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <span style="font-size:1.8rem">🚕</span>
             <div>
               <div style="font-weight:700;font-size:.95rem;color:var(--black)">Такси</div>
-              <div style="font-size:.8rem;color:var(--gray)">Доставка такси</div>
+              <div style="font-size:.8rem;color:var(--gray)">Курьер до вашего адреса</div>
             </div>
           </div>
         </button>
@@ -1587,12 +1614,16 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <div style="font-size:.75rem;color:rgba(255,255,255,.6)" id="checkout-total-breakdown">Товары: 0 сом</div>
         </div>
         
-        <!-- Alif Payment -->
-        <div style="background:rgba(255,255,255,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px">
-          <div style="font-size:.9rem;font-weight:600;margin-bottom:8px;color:rgba(255,255,255,.9)">🏦 Alif Bank</div>
-          <div style="font-size:1.6rem;font-weight:700;letter-spacing:1px;margin-bottom:4px">902070045</div>
-          <div style="font-size:.8rem;color:rgba(255,255,255,.6)">Dushanbe City</div>
-          <div style="font-size:.75rem;color:rgba(255,255,255,.5);margin-top:4px">А.Х</div>
+        <!-- Способы оплаты -->
+        <div class="pay-bank-card">
+          <div class="pay-bank-title">🏦 Alif Bank</div>
+          <div class="pay-bank-number" id="pay-alif-number">902070045</div>
+          <div class="pay-bank-holder" id="pay-holder-name">А.Х</div>
+        </div>
+        <div class="pay-bank-card">
+          <div class="pay-bank-title">🏛 Dushanbe City</div>
+          <div class="pay-bank-number" id="pay-dc-number">902070045</div>
+          <div class="pay-bank-holder" id="pay-dc-holder">А.Х</div>
         </div>
         
         <div style="text-align:center;font-size:.8rem;color:rgba(255,255,255,.5)">
@@ -2317,45 +2348,53 @@ window.goToCheckoutStep3 = async () => {
     return;
   }
   
-  // Calculate and display total amount
-  const subtotal = window._cart.reduce((s,i) => s + (i.price||0), 0);
+  const subtotal = window._cart.reduce((s, i) => s + (Number(i.price) || 0) * (i.qty || 1), 0);
   let deliveryFee = 0;
-  let deliveryFeeText = '';
-  
+  let deliveryNote = '';
+
   if (window.checkoutDelivery === 'taxi' && window.checkoutDeliveryPayer === 'fixed') {
     try {
       const settings = await fetch('/api/platform-settings').then(r => r.json());
       deliveryFee = Number(settings.taxi_fixed_fee || 50);
-      deliveryFeeText = `Доставка (такси): ${deliveryFee} сом`;
-    } catch(e) {
+    } catch (e) {
       deliveryFee = 50;
-      deliveryFeeText = `Доставка (такси): 50 сом`;
     }
+    deliveryNote = `Доставка такси: ${deliveryFee.toLocaleString('ru')} сом`;
   } else if (window.checkoutDelivery === 'pickup') {
-    deliveryFeeText = 'Самовывоз (бесплатно)';
+    deliveryNote = 'Самовывоз';
   } else if (window.checkoutDelivery === 'taxi' && window.checkoutDeliveryPayer === 'buyer') {
-    deliveryFeeText = 'Доставка оплачивается водителю отдельно';
+    deliveryNote = 'Такси оплачивается водителю отдельно';
   }
-  
+
   const total = subtotal + deliveryFee;
-  
+  window.checkoutSubtotal = subtotal;
+  window.checkoutDeliveryFee = deliveryFee;
+  window.checkoutTotal = total;
+
   const totalAmountEl = document.getElementById('checkout-total-amount');
   const totalBreakdownEl = document.getElementById('checkout-total-breakdown');
-  
+
   if (totalAmountEl) {
     totalAmountEl.textContent = total.toLocaleString('ru') + ' сом';
   }
-  
+
   if (totalBreakdownEl) {
-    const breakdown = [`Товары: ${subtotal.toLocaleString('ru')} сом`];
-    if (deliveryFee > 0) {
-      breakdown.push(`Доставка: ${deliveryFee} сом`);
-    }
-    if (deliveryFeeText) {
-      breakdown.push(deliveryFeeText);
-    }
-    totalBreakdownEl.textContent = breakdown.join(' + ');
+    const parts = [`Товары: ${subtotal.toLocaleString('ru')} сом`];
+    if (deliveryNote) parts.push(deliveryNote);
+    totalBreakdownEl.textContent = parts.join(' · ');
   }
+
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    const alifEl = document.getElementById('pay-alif-number');
+    const dcEl = document.getElementById('pay-dc-number');
+    const holderEl = document.getElementById('pay-holder-name');
+    const dcHolderEl = document.getElementById('pay-dc-holder');
+    if (alifEl && cfg.payment_alif_number) alifEl.textContent = cfg.payment_alif_number;
+    if (dcEl && cfg.payment_dc_number) dcEl.textContent = cfg.payment_dc_number;
+    if (holderEl && cfg.payment_holder) holderEl.textContent = cfg.payment_holder;
+    if (dcHolderEl && cfg.payment_holder) dcHolderEl.textContent = cfg.payment_holder;
+  } catch (_) {}
   
   document.getElementById('checkout-step-2').style.display = 'none';
   document.getElementById('checkout-step-3').style.display = 'block';
@@ -2386,6 +2425,9 @@ window.resetCheckoutForm = () => {
   document.getElementById('checkout-receipt').value = '';
   window.checkoutDelivery = null;
   window.checkoutDeliveryPayer = null;
+  window.checkoutSubtotal = 0;
+  window.checkoutDeliveryFee = 0;
+  window.checkoutTotal = 0;
   window.checkoutReceiptFile = null;
   const payerBlock = document.getElementById('taxi-payer-block');
   if (payerBlock) payerBlock.style.display = 'none';
@@ -2457,12 +2499,14 @@ window.completeCheckout = async () => {
     return;
   }
   
-  const total = window._cart.reduce((s,i) => s + (i.price||0), 0);
-  
+  const subtotal = window._cart.reduce((s, i) => s + (Number(i.price) || 0) * (i.qty || 1), 0);
+  const deliveryFee = Number(window.checkoutDeliveryFee) || 0;
+  const total = window.checkoutTotal != null ? window.checkoutTotal : (subtotal + deliveryFee);
+
   const fd = new FormData();
   fd.append('customer_name', name);
   fd.append('customer_phone', phone);
-  fd.append('customer_address', address);
+  fd.append('customer_address', address || receiverAddress || '');
   fd.append('delivery_type', delivery);
   if (window.checkoutDeliveryPayer) fd.append('delivery_payer', window.checkoutDeliveryPayer);
   fd.append('total', total);

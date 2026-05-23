@@ -124,7 +124,13 @@ async function renderDisputes() {
     const statusLabel = { refund_requested:'⚠️ Запрошен возврат', refund_disputed:'🔴 Оспорен магазином' };
     list.innerHTML = rows.map(o => {
       const items = Array.isArray(o.items) ? o.items : [];
-      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1}`).join('<br>');
+      const lineSumDis = (i) => {
+        const q = Math.max(1, Number(i.qty) || 1);
+        const lt = Number(i.line_total);
+        if (lt > 0) return lt;
+        return (Number(i.price) || 0) * q;
+      };
+      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1} — ${fmt(lineSumDis(i))} сом.`).join('<br>');
       const shop = o.shop || {};
       return `<div class="acard" style="border-color:rgba(239,68,68,.35);box-shadow:0 0 0 3px rgba(239,68,68,.06);margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
@@ -767,15 +773,27 @@ async function renderOrders() {
       const st = o.status || 'pending';
       let items = [];
       try { items = typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []); } catch(_) {}
-      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1} — ${fmt(i.line_total || i.price)} сом.`).join('<br>');
+      const lineSum = (i) => {
+        const q = Math.max(1, Number(i.qty) || 1);
+        const lt = Number(i.line_total);
+        if (lt > 0) return lt;
+        return (Number(i.price) || 0) * q;
+      };
+      const itemsList = items.map(i => `• ${esc(i.title||'')} ×${i.qty||1} — ${fmt(lineSum(i))} сом.`).join('<br>');
 
-      const finance = (o.subtotal != null) ? `
+      const itemsSubtotal = items.reduce((s, i) => s + lineSum(i), 0);
+      const orderSubtotal = o.subtotal != null ? Number(o.subtotal) : itemsSubtotal;
+      const deliveryFee = Number(o.delivery_fee || 0);
+      const orderTotal = Number(o.total) || (orderSubtotal + deliveryFee);
+
+      const finance = `
         <div style="margin-top:8px;padding:10px 12px;background:rgba(34,160,91,.06);border-radius:10px;font-size:.78rem;display:grid;grid-template-columns:1fr auto;gap:4px 12px">
-          <span style="color:var(--gray)">Подытог</span><span style="text-align:right">${fmt(o.subtotal)} сом</span>
-          ${Number(o.delivery_fee||0) > 0 ? `<span style="color:var(--gray)">Доставка</span><span style="text-align:right">${fmt(o.delivery_fee)} сом</span>` : ''}
-          <span style="color:var(--gray)">Комиссия (${Number(o.commission_percent||0)}%)</span><span style="text-align:right;color:var(--green-d);font-weight:600">${fmt(o.platform_fee)} сом</span>
-          <span style="color:var(--gray)">К выплате магазину</span><span style="text-align:right;font-weight:600">${fmt(o.seller_payout)} сом</span>
-        </div>` : '';
+          <span style="color:var(--gray)">Товары</span><span style="text-align:right">${fmt(orderSubtotal)} сом</span>
+          ${deliveryFee > 0 ? `<span style="color:var(--gray)">Доставка такси</span><span style="text-align:right">${fmt(deliveryFee)} сом</span>` : ''}
+          <span style="font-weight:700">К оплате (чек)</span><span style="text-align:right;font-weight:700;color:var(--green-d)">${fmt(orderTotal)} сом</span>
+          ${o.platform_fee != null ? `<span style="color:var(--gray)">Комиссия (${Number(o.commission_percent||0)}%)</span><span style="text-align:right;color:var(--green-d);font-weight:600">${fmt(o.platform_fee)} сом</span>` : ''}
+          ${o.seller_payout != null ? `<span style="color:var(--gray)">К выплате магазину</span><span style="text-align:right;font-weight:600">${fmt(o.seller_payout)} сом</span>` : ''}
+        </div>`;
 
       return `<div class="acard" ${isDispute(st) ? 'style="border-color:rgba(239,68,68,.4);box-shadow:0 0 0 3px rgba(239,68,68,.08)"' : ''}>
         <div class="acard-top">
@@ -789,7 +807,7 @@ async function renderOrders() {
             <div style="font-size:.78rem;color:var(--gray);margin-top:3px">�📞 ${esc(o.customer_phone)}</div>
             <div style="font-size:.78rem;color:var(--gray)">📍 ${esc(o.customer_address)}</div>
             <div style="font-size:.78rem;color:var(--gray)">🚚 ${deliveryLabel[o.delivery_type]||o.delivery_type}${o.delivery_payer ? ' · ' + (payerLabel[o.delivery_payer] || o.delivery_payer) : ''}</div>
-            <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">${fmt(o.total)} сом.</div>
+            <div style="font-size:.9rem;font-weight:700;color:var(--green-d);margin-top:4px">К оплате: ${fmt(orderTotal)} сом.</div>
           </div>
         </div>
 

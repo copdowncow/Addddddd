@@ -649,18 +649,38 @@ async function notifyAdminAboutOrder(order) {
   else if (typeof order.items === 'string' && order.items.trim()) {
     try { items = JSON.parse(order.items); } catch (e) { items = []; }
   }
+  const lineAmount = (i) => {
+    const q = Math.max(1, Number(i.qty) || 1);
+    const lt = Number(i.line_total);
+    if (lt > 0) return lt;
+    return (Number(i.price) || 0) * q;
+  };
   const itemsList = (items || [])
-    .map(i => `• ${i.title || i.name || 'Товар'} — ${(Number(i.price)||0).toLocaleString('ru')} сом.`)
+    .map(i => {
+      const q = Math.max(1, Number(i.qty) || 1);
+      return `• ${i.title || i.name || 'Товар'} ×${q} — ${lineAmount(i).toLocaleString('ru')} сом.`;
+    })
     .join('\n');
   const deliveryLabel = order.delivery_type === 'pickup' ? '🏪 Самовывоз' : '🚕 Такси';
+  const payerNote = order.delivery_payer === 'fixed'
+    ? ' (включена в сумму)'
+    : order.delivery_payer === 'buyer'
+      ? ' (оплата водителю)'
+      : '';
   const adminUrl = `${getMiniAppUrl()}/#admin`;
 
   let message = `🛒 <b>НОВЫЙ ЗАКАЗ #${order.id}</b>\n\n`;
   if (order.customer_name) message += `👤 Имя: ${order.customer_name}\n`;
   message += `📞 Телефон: ${order.customer_phone}\n`;
   message += `📍 Адрес: ${order.customer_address}\n`;
-  message += `🚚 Доставка: ${deliveryLabel}\n`;
-  message += `💰 Сумма: ${(order.total||0).toLocaleString('ru')} сом.\n\n`;
+  message += `🚚 ${deliveryLabel}${payerNote}\n`;
+  if (order.subtotal != null) {
+    message += `🛍 Подытог: ${Number(order.subtotal).toLocaleString('ru')} сом.\n`;
+    if (Number(order.delivery_fee) > 0) {
+      message += `🚕 Доставка: ${Number(order.delivery_fee).toLocaleString('ru')} сом.\n`;
+    }
+  }
+  message += `💰 <b>К оплате: ${(order.total||0).toLocaleString('ru')} сом.</b>\n\n`;
   if (order.fast_order) message += `⚡ <b>СРОЧНЫЙ ЗАКАЗ</b>\n`;
   if (order.delivery_time) message += `⏰ Желаемое время: ${order.delivery_time}\n`;
   if (order.fast_order || order.delivery_time) message += `\n`;

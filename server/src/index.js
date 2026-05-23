@@ -121,6 +121,9 @@ router.get('/config',            (req, res) => res.json({
   instagram:    process.env.ADMIN_INSTAGRAM || 'https://instagram.com/rebuket',
   telegram:     process.env.ADMIN_TELEGRAM  || 'https://t.me/rebuket_admin',
   bot_username: process.env.BOT_USERNAME    || 'ReBuket_bot',
+  payment_alif_number: process.env.PAYMENT_ALIF_NUMBER || '902070045',
+  payment_dc_number:   process.env.PAYMENT_DC_NUMBER   || '902070045',
+  payment_holder:      process.env.PAYMENT_HOLDER      || 'А.Х',
 }));
 
 // ── Disputes ─────────────────────────────────────────────
