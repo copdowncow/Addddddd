@@ -1532,13 +1532,38 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         <div class="form-group">
           <label id="delivery-time-label">Желаемое время доставки</label>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <input type="date" id="checkout-delivery-date" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
-            <input type="time" id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+            <div style="position:relative">
+              <input type="date" id="checkout-delivery-date" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+              <span class="input-hint" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:auto;color:var(--gray);font-size:.95rem;cursor:text" onclick="document.getElementById('checkout-delivery-date').focus();">нажмите чтобы выбрать день</span>
+            </div>
+            <div style="position:relative">
+              <input type="time" id="checkout-delivery-time" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;font-size:.95rem;background:#fff">
+              <span class="input-hint" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:auto;color:var(--gray);font-size:.95rem;cursor:text" onclick="document.getElementById('checkout-delivery-time').focus();">нажмите чтобы выбрать время</span>
+            </div>
           </div>
           <small style="color:var(--gray);font-size:.75rem;display:block;margin-top:8px">
             Дата и время по GMT+5 (Душанбе). Нельзя выбрать прошедшую дату и время.
           </small>
         </div>
+        <script>
+          (function(){
+            function initHint(inputId){
+              const inp = document.getElementById(inputId);
+              if(!inp) return;
+              const hint = inp.parentElement.querySelector('.input-hint');
+              const upd = () => { if(!hint) return; hint.style.display = inp.value ? 'none' : 'block'; };
+              // initial
+              upd();
+              // events
+              inp.addEventListener('input', upd);
+              inp.addEventListener('change', upd);
+              // when form is reset externally, keep hint in sync
+              document.addEventListener('reset', () => setTimeout(upd, 0));
+            }
+            initHint('checkout-delivery-date');
+            initHint('checkout-delivery-time');
+          })();
+        </script>
       </div>
       
       <button class="btn btn-primary" style="width:100%;border-radius:14px;padding:14px" onclick="goToCheckoutStep2()">
