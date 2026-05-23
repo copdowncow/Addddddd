@@ -518,10 +518,15 @@ exports.createProduct = async (req, res) => {
       })
     )
       .then(photos => getClient().from('products').update({ photos }).eq('id', data.id))
-      .then(() => {
-        // Используем исходные данные с добавленными фото для уведомления
-        const productWithPhotos = { ...data, photos };
-        return notifyProduct(productWithPhotos);
+      .then(() => getClient().from('products').select('*').eq('id', data.id).single())
+      .then(updatedProduct => {
+        if (updatedProduct) {
+          return notifyProduct(updatedProduct);
+        } else {
+          console.error('[createProduct] Failed to load updated product for notification');
+          // Fallback: use original data with photos
+          return notifyProduct({ ...data, photos });
+        }
       })
       .catch(err => console.error('Фото/уведомление ошибка:', err));
 
