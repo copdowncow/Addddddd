@@ -1,10 +1,15 @@
 'use strict';
 
 const TG = require('node-telegram-bot-api');
+const { createSupabaseClient } = require('../db/supabase');
 
 let userBot  = null;
 let adminBot = null;
 let shopBot  = null;
+/** Только отправка в shop-бот (без polling) — не блокируется обработчиками */
+let shopNotifyBot = null;
+/** Резерв таймеров, если колонки в БД ещё не добавлены */
+const shopResponseTimers = new Map();
 const adminChatIds = new Set();
 // In-memory pending-inquiry cache (referenced by inquiries.js)
 const _pendingInquiries = new Map();
@@ -552,6 +557,20 @@ function ensureShopBot() {
   return !!shopBot;
 }
 
+function getShopNotifyBot() {
+  const token = process.env.BOT_TOKEN_SHOP;
+  if (!token) return null;
+  if (!shopNotifyBot) {
+    try {
+      shopNotifyBot = new TG(token, { polling: false });
+    } catch (e) {
+      console.error('[getShopNotifyBot]', e.message);
+      return null;
+    }
+  }
+  return shopNotifyBot;
+}
+
 /** Телефон для показа в сообщениях (без «+» в начале) */
 function phoneDisplay(phone) {
   const s = String(phone || '').trim();
@@ -605,6 +624,8 @@ function shopWaitStartedAt(order) {
 }
 
 function orderRejectDeadlineMs(order) {
+  const cached = shopResponseTimers.get(String(order.id));
+  if (cached?.deadlineMs) return cached.deadlineMs;
   if (order.shop_response_deadline_at) {
     const ms = new Date(order.shop_response_deadline_at).getTime();
     return Number.isFinite(ms) ? ms : null;
@@ -613,12 +634,37 @@ function orderRejectDeadlineMs(order) {
   return start ? start + SHOP_REJECT_MS : null;
 }
 
-/** Старт таймера ответа магазина (10 мин → автоотклонение) */
+function orderReminderAlreadySent(orderId) {
+  const c = shopResponseTimers.get(String(orderId));
+  return c?.reminderSent === true;
+}
+
+function markOrderReminderSent(orderId) {
+  const c = shopResponseTimers.get(String(orderId));
+  if (c) c.reminderSent = true;
+  else shopResponseTimers.set(String(orderId), { startMs: Date.now(), deadlineMs: Date.now() + SHOP_REJECT_MS, reminderSent: true });
+}
+
+function cacheShopTimer(orderId, startMs, deadlineMs) {
+  shopResponseTimers.set(String(orderId), {
+    startMs,
+    deadlineMs,
+    reminderSent: false,
+  });
+}
+
+function clearShopTimer(orderId) {
+  shopResponseTimers.delete(String(orderId));
+}
+
+/** Старт таймера ответа магазина (5 мин напоминание, 10 мин автоотклонение) */
 async function setShopResponseTimer(orderId, existingStartIso) {
   const db = createSupabaseClient();
   const startMs = existingStartIso ? Date.parse(existingStartIso) : Date.now();
   const start = new Date(startMs).toISOString();
-  const deadline = new Date(startMs + SHOP_REJECT_MS).toISOString();
+  const deadlineMs = startMs + SHOP_REJECT_MS;
+  const deadline = new Date(deadlineMs).toISOString();
+  cacheShopTimer(orderId, startMs, deadlineMs);
 
   const payloads = [
     { payment_confirmed_at: start, shop_response_deadline_at: deadline },
@@ -628,14 +674,15 @@ async function setShopResponseTimer(orderId, existingStartIso) {
     const { error } = await db.from('orders').update(payload).eq('id', orderId);
     if (!error) {
       console.log('[setShopResponseTimer] order', orderId, 'deadline', deadline);
-      return { start, deadline };
+      return { start, deadline, deadlineMs };
     }
     if (!/column/i.test(error.message || '')) {
       console.log('[setShopResponseTimer]', orderId, error.message);
       break;
     }
   }
-  return { start, deadline };
+  console.log('[setShopResponseTimer] order', orderId, 'memory-only deadline', deadline);
+  return { start, deadline, deadlineMs };
 }
 
 async function findShopsBySellerPhones(sellerPhones) {
@@ -884,12 +931,13 @@ async function handleOrderCallback(callbackQuery) {
 async function notifySellerAboutOrder(order) {
   if (!order) return;
 
-  if (!shopBot && !ensureShopBot()) {
-    console.error('[notifySellerAboutOrder] shopBot not available — задайте BOT_TOKEN_SHOP');
+  const bot = getShopNotifyBot();
+  if (!bot) {
+    console.error('[notifySellerAboutOrder] BOT_TOKEN_SHOP не задан');
     await notifyAdminShopsNotLinked(order, { noBot: [true] });
     return;
   }
-  const bot = shopBot;
+  if (!shopBot) ensureShopBot();
 
   let items = [];
   if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch (e) { items = []; } }
@@ -940,7 +988,10 @@ async function notifySellerAboutOrder(order) {
       continue;
     }
     const shopNotifyKey = `seller_order:${phoneDigits(shop.phone)}`;
-    if (!canSendNotification(order.id, shopNotifyKey)) continue;
+    if (!canSendNotification(order.id, shopNotifyKey)) {
+      console.log('[notifySellerAboutOrder] skip duplicate', order.id, shop.phone);
+      continue;
+    }
     try {
       await bot.sendMessage(shop.telegram_chat_id, message, { parse_mode: 'HTML', reply_markup: keyboard });
       console.log('[notifySellerAboutOrder] Notified shop:', shop.phone, 'chat:', shop.telegram_chat_id);
@@ -961,6 +1012,7 @@ async function notifySellerAboutOrder(order) {
       console.error('[notifySellerAboutOrder] setShopResponseTimer:', e.message);
     }
   }
+  return sent;
 }
 
 async function notifyAdminAboutShopOrder(order, shop) {
@@ -1918,6 +1970,10 @@ function initShopBot() {
         return;
       }
 
+      if (['seller_accepted', 'rejected'].includes(newStatus)) {
+        clearShopTimer(orderId);
+      }
+
       if (!updated.customer_chat_id) {
         const resolved = await resolveChatId({
           phone: updated.customer_phone,
@@ -2394,7 +2450,8 @@ async function notifyAdminShopTimeoutRejected(order) {
 }
 
 async function notifyShopsShopReminder(order) {
-  if (!shopBot && !ensureShopBot()) return;
+  const bot = getShopNotifyBot();
+  if (!bot) return;
 
   let items = [];
   if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch (_) { items = []; } }
@@ -2407,8 +2464,8 @@ async function notifyShopsShopReminder(order) {
   const leftMins = Math.max(1, Math.round((SHOP_REJECT_MS - SHOP_REMINDER_MS) / 60000));
   const text =
     `⏰ <b>Напоминание: заказ #${order.id}</b>\n\n` +
-    `Прошло ${Math.round(SHOP_REMINDER_MS / 60000)} мин. — примите или отклоните заказ.\n` +
-    `Через <b>${leftMins} мин.</b> заказ будет отменён автоматически.`;
+    `Вы ещё не ответили на заказ.\n` +
+    `Через <b>${leftMins} мин.</b> он будет <b>отклонён автоматически</b>, если не нажмёте «Принять» или «Отклонить».`;
 
   const keyboard = {
     inline_keyboard: [[
@@ -2422,8 +2479,9 @@ async function notifyShopsShopReminder(order) {
     const key = `shop_reminder:${phoneDigits(shop.phone)}`;
     if (!canSendNotification(order.id, key)) continue;
     try {
-      await shopBot.sendMessage(shop.telegram_chat_id, text, { parse_mode: 'HTML', reply_markup: keyboard });
+      await bot.sendMessage(shop.telegram_chat_id, text, { parse_mode: 'HTML', reply_markup: keyboard });
       markNotificationSent(order.id, key);
+      markOrderReminderSent(order.id);
       console.log('[notifyShopsShopReminder] order', order.id, 'shop', shop.phone);
     } catch (e) {
       console.log('[notifyShopsShopReminder]', shop.phone, e.message);
@@ -2449,7 +2507,8 @@ async function notifyAdminShopReminder(order) {
 }
 
 async function notifyShopsShopTimeoutRejected(order) {
-  if (!shopBot && !ensureShopBot()) return;
+  const bot = getShopNotifyBot();
+  if (!bot) return;
 
   let items = [];
   if (typeof order.items === 'string') { try { items = JSON.parse(order.items); } catch (_) { items = []; } }
@@ -2470,12 +2529,13 @@ async function notifyShopsShopTimeoutRejected(order) {
     const key = `shop_timeout_reject:${phoneDigits(shop.phone)}`;
     if (!canSendNotification(order.id, key)) continue;
     try {
-      await shopBot.sendMessage(shop.telegram_chat_id, text, { parse_mode: 'HTML' });
+      await bot.sendMessage(shop.telegram_chat_id, text, { parse_mode: 'HTML' });
       markNotificationSent(order.id, key);
     } catch (e) {
       console.log('[notifyShopsShopTimeoutRejected]', shop.phone, e.message);
     }
   }
+  clearShopTimer(order.id);
 }
 
 async function autoRejectShopOrder(db, order) {
@@ -2497,6 +2557,7 @@ async function autoRejectShopOrder(db, order) {
     return null;
   }
   if (!updated) return null;
+  clearShopTimer(order.id);
 
   console.log('[processShopOrderTimeouts] Auto-rejected order', updated.id);
   try { await notifyCustomerShopTimeoutRejected(updated); } catch (e) {
@@ -2550,12 +2611,18 @@ async function processShopOrderTimeouts() {
 
     let deadline = orderRejectDeadlineMs(order);
     if (!deadline) {
-      try {
-        const t = await setShopResponseTimer(order.id);
-        deadline = Date.parse(t.deadline);
-      } catch (e) {
-        console.log('[processShopOrderTimeouts] init timer', order.id, e.message);
-        continue;
+      const start = shopWaitStartedAt(order);
+      if (start) {
+        deadline = start + SHOP_REJECT_MS;
+        cacheShopTimer(order.id, start, deadline);
+      } else {
+        try {
+          const t = await setShopResponseTimer(order.id);
+          deadline = t.deadlineMs || Date.parse(t.deadline);
+        } catch (e) {
+          console.log('[processShopOrderTimeouts] init timer', order.id, e.message);
+          continue;
+        }
       }
     }
 
@@ -2564,8 +2631,9 @@ async function processShopOrderTimeouts() {
       continue;
     }
 
-    const started = shopWaitStartedAt(order);
-    if (started && now - started >= SHOP_REMINDER_MS) {
+    const started = shopWaitStartedAt(order) || (deadline - SHOP_REJECT_MS);
+    const needReminder = started && now - started >= SHOP_REMINDER_MS && !orderReminderAlreadySent(order.id);
+    if (needReminder) {
       try { await notifyShopsShopReminder(order); } catch (e) {
         console.log('[processShopOrderTimeouts] shop reminder:', e.message);
       }
