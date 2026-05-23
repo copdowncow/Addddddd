@@ -37,8 +37,24 @@ function priceWithCommission(p) {
 /** Ссылка на карточку товара (для эко-заказов через Telegram) */
 function productPageUrl(p) {
   const slug = (p && (p.slug || p.id)) || '';
-  const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
-  return slug ? `${origin}/#product-${slug}` : `${origin}/`;
+  if (!slug) {
+    if (typeof location !== 'undefined' && location.origin) return `${location.origin}/`;
+    return '/';
+  }
+  const origin = (typeof location !== 'undefined' && location.origin)
+    ? location.origin
+    : `${location.protocol}//${location.host}`;
+  return `${origin}/#product-${encodeURIComponent(String(slug))}`;
+}
+
+function getTelegramAdminHandle() {
+  const adminRaw = (_cfg.telegram || 'https://t.me/rebuket_admin').toString();
+  return adminRaw.replace(/^https?:\/\/t\.me\//, '').replace(/^@/, '').trim();
+}
+
+function buildTelegramAdminUrl(message) {
+  const handle = getTelegramAdminHandle() || 'rebuket_admin';
+  return 'https://t.me/' + handle + '?text=' + encodeURIComponent(message || '');
 }
 
 function ecoTelegramBuyMessage(p) {
@@ -817,7 +833,7 @@ function pCard(p) {
   const shopName = shopCard ? (p.shop_name || 'Магазин') : '';
   const shopPhone = shopCard ? (p.seller_phone || '') : '';
   const shopPhoto = shopCard ? (p.photo_url || p.seller_photo || '') : '';
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent(ecoTelegramBuyMessage(p));
+  const telegramLink = buildTelegramAdminUrl(ecoTelegramBuyMessage(p));
   
   // For shop listings, show shop info with photo instead of description
   const shouldShowShopInfo = shopCard;
@@ -1030,7 +1046,7 @@ function renderDetail(p, el) {
   const shopPhone = p.seller_phone || '';
   const shopPhoto = p.photo_url || p.seller_photo || '';
   const shopCard = isShopListing(p);
-  const telegramLink = 'https://t.me/rebuket_admin?text=' + encodeURIComponent(ecoTelegramBuyMessage(p));
+  const telegramLink = buildTelegramAdminUrl(ecoTelegramBuyMessage(p));
   const shopAvatarHtml = shopPhoto
     ? '<img src="' + esc(shopPhoto) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover">'
     : '<span style="width:40px;height:40px;border-radius:50%;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:1rem">' + esc(getShopAvatar(shopName)) + '</span>';
