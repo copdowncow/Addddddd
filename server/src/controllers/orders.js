@@ -395,21 +395,32 @@ exports.shopUpdateOrderStatus = async (req, res) => {
       .select('status')
       .eq('id', id)
       .single();
-    if (existing && existing.status === 'pending') {
+    if (!existing) {
+      return res.status(404).json({ error: 'Заказ не найден' });
+    }
+    if (existing.status === 'pending') {
       return res.status(400).json({ error: 'Заказ ещё не подтверждён админом (оплата)' });
     }
 
     // Backward compat: 'confirmed' from shop = seller_accepted
     const newStatus = status === 'confirmed' ? 'seller_accepted' : status;
+    const waitingShop = ['payment_confirmed', 'confirmed'];
+    if (['seller_accepted', 'rejected'].includes(newStatus) && !waitingShop.includes(existing.status)) {
+      return res.status(409).json({ error: 'Заказ уже обработан' });
+    }
 
     const { data, error } = await getClient()
       .from('orders')
       .update({ status: newStatus })
       .eq('id', id)
+      .eq('status', existing.status)
       .select()
       .single();
 
     if (error) throw error;
+    if (!data) {
+      return res.status(409).json({ error: 'Заказ уже обработан' });
+    }
 
     // Send notification to main admin about shop decision
     try {
