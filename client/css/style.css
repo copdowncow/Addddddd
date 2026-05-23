@@ -491,6 +491,8 @@
 }
 .shop-card-status.active { background: rgba(34,160,91,.12); color: #0f7a3f; border-color: rgba(34,160,91,.24); }
 .shop-card-status.hidden { background: rgba(239,68,68,.10); color: #dc2626; border-color: rgba(239,68,68,.22); }
+.shop-card-status.sold_out { background: rgba(107,114,128,.12); color: #4b5563; border-color: rgba(107,114,128,.22); }
+.shop-card-status.pending { background: rgba(245,158,11,.12); color: #b45309; border-color: rgba(245,158,11,.22); }
 .shop-pub-meta { font-size: .76rem; color: var(--gray); margin-bottom: 4px; line-height: 1.5; }
 .shop-pub-price { font-size: 1.05rem; font-weight: 800; color: var(--green-d); margin: 8px 0 12px; }
 .shop-pub-actions { display: flex; gap: 8px; }

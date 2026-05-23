@@ -891,8 +891,8 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
       <h1>rebuket<span>.tj</span></h1>
       <p>Купи или продай букеты, корзины, мишки и сладости.<br>Свежие цветы и угощения по всему Таджикистану.</p>
       <div class="hero-btns">
-        <button class="btn btn-black"   onclick="setModeAndGo('eco')"> Эко</button>
-        <button class="btn btn-primary" onclick="setModeAndGo('shop')"> Магазинные</button>
+        <button class="btn btn-black"   onclick="setModeAndGo('eco')">🌿 Эко</button>
+        <button class="btn btn-primary" onclick="setModeAndGo('shop')">🏪 Магазинные</button>
         <button class="btn btn-outline" onclick="goPage('sell')">+ Разместить</button>
       </div>
     </div>
@@ -1027,6 +1027,21 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
       </div>
     </div>
 
+    <!-- Bulk availability -->
+    <div class="sp-bulk-card" id="shop-bulk-avail-card" style="background:var(--warm);border-radius:16px;padding:18px;margin:20px 0 8px;border:1.5px solid var(--border)">
+      <p style="font-weight:700;margin-bottom:12px;color:var(--mid)">📦 Статус для всех публикаций</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" id="bulk-avail-chips">
+        <button type="button" class="chip" data-val="in_stock" onclick="selectBulkAvail('in_stock',this)">✅ В наличии</button>
+        <button type="button" class="chip" data-val="on_order" onclick="selectBulkAvail('on_order',this)">⏳ На заказ</button>
+      </div>
+      <input type="hidden" id="bulk-availability-type" value="">
+      <div id="bulk-prep-hours-wrap" style="display:none;margin-bottom:12px">
+        <label style="font-size:.88rem;font-weight:600">Готовность (часов)</label>
+        <input type="number" id="bulk-prep-hours" placeholder="24" min="1" style="width:100%;max-width:200px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;margin-top:6px">
+      </div>
+      <button class="btn btn-outline" style="width:100%;padding:12px" onclick="applyBulkAvailability()">Применить ко всем публикациям</button>
+    </div>
+
     <!-- Publications list -->
     <div class="sp-pubs-header">
       <span>Мои публикации</span>
@@ -1132,7 +1147,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
         <div class="form-group fg-full"><label>Название *</label><input type="text" id="sell-title" placeholder="Нежный букет из роз / Трайфл клубничный"></div>
         <div class="form-group fg-full"><label>Описание</label><textarea id="sell-desc" placeholder="Состав, особенности, повод, вес (для сладостей)…"></textarea></div>
         <div class="form-group">
-          <label>Ваша цена (TJS) *</label>
+          <label id="sell-price-label">Ваша цена (TJS) *</label>
           <input type="number" id="sell-price" placeholder="350" oninput="updatePricePreview()" min="1">
           <div id="price-preview">
             <div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:var(--gray)">💵 Вы получите:</span><span id="price-seller" style="font-weight:700;color:var(--green)"></span></div>
@@ -1161,6 +1176,19 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <div class="form-group" data-shop-hide><label>Время получения</label><input type="text" id="sell-time" placeholder="09:00–21:00 ежедневно"></div>
             <div class="form-group" id="market-price-field"><label>Цена в других магазинах <span style="color:var(--gray);font-weight:400">(необязательно)</span></label><input type="number" id="sell-market-price" placeholder="Например: 350" min="0"></div>
             <div class="form-group" id="stock-field"><label>Количество в наличии <span style="color:var(--gray);font-weight:400">(для магазинов)</span></label><input type="number" id="sell-stock" placeholder="Например: 5" min="0"></div>
+            <div class="form-group fg-full" id="shop-availability-field" data-shop-only style="display:none">
+              <label>Статус товара *</label>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="shop-avail-chips">
+                <button type="button" class="chip active" data-val="in_stock" onclick="selectShopAvail('in_stock',this)">✅ В наличии</button>
+                <button type="button" class="chip" data-val="on_order" onclick="selectShopAvail('on_order',this)">⏳ На заказ</button>
+              </div>
+              <input type="hidden" id="sell-availability-type" value="in_stock">
+              <div id="shop-prep-hours-wrap" style="display:none;margin-top:12px">
+                <label>Готовность (часов) *</label>
+                <input type="number" id="sell-prep-hours" placeholder="Например: 24" min="1" style="width:100%;max-width:200px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;margin-top:6px">
+                <p style="font-size:.78rem;color:var(--gray);margin-top:5px">Сколько часов нужно на приготовление</p>
+              </div>
+            </div>
             <div class="form-group fg-full" id="size-field" data-shop-hide>
               <label>Размер * <span style="color:var(--gray);font-weight:400">(обязательно)</span></label>
               <div id="size-chips-wrap" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">

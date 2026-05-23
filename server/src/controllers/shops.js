@@ -4,6 +4,7 @@ const jwt       = require('jsonwebtoken');
 const sharp     = require('sharp');
 const { getClient, uploadPhoto } = require('../db/supabase');
 const { notifyShopRegistration, notifyProductEdited } = require('../services/telegram');
+const { enrichProductPricing } = require('../services/productPricing');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'rebuket_secret_key';
 
@@ -352,8 +353,16 @@ exports.listProducts = async (req, res) => {
 
     console.log('[listProducts] Found products:', count, 'data length:', data?.length);
 
+    const { data: shopInfo } = await getClient()
+      .from('shops')
+      .select('commission_percent')
+      .eq('id', req.shop.shop_id)
+      .maybeSingle();
+
+    const enriched = (data || []).map(p => enrichProductPricing({ ...p, listing_type: p.listing_type || 'shop' }, shopInfo));
+
     res.json({
-      data: data || [],
+      data: enriched,
       total: count || 0,
       page: Number(page),
       limit: lim,
@@ -383,7 +392,10 @@ exports.updateProduct = async (req, res) => {
       return res.status(403).json({ error: 'Нет доступа к этой публикации' });
     }
 
-    const { title, description, category, size, address, pickup_time } = req.body;
+    const {
+      title, description, category, size, address,
+      availability_type, prepare_hours
+    } = req.body;
 
     const updates = {};
     if (title       !== undefined && title.trim())       updates.title       = title.trim();
@@ -391,7 +403,23 @@ exports.updateProduct = async (req, res) => {
     if (category    !== undefined && category.trim())    updates.category    = category.trim();
     if (size        !== undefined)                       updates.size        = size || null;
     if (address     !== undefined)                       updates.address     = address || null;
-    if (pickup_time !== undefined)                       updates.pickup_time = pickup_time || null;
+
+    if (availability_type !== undefined) {
+      const at = availability_type === 'on_order' ? 'on_order' : 'in_stock';
+      updates.availability_type = at;
+      if (at === 'on_order') {
+        const hrs = Number(prepare_hours);
+        if (!hrs || hrs < 1) {
+          return res.status(400).json({ error: 'Укажите срок готовности в часах' });
+        }
+        updates.prepare_hours = hrs;
+      } else {
+        updates.prepare_hours = null;
+      }
+    } else if (prepare_hours !== undefined && product.availability_type === 'on_order') {
+      const hrs = Number(prepare_hours);
+      if (hrs >= 1) updates.prepare_hours = hrs;
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'Нет данных для обновления' });
@@ -414,6 +442,91 @@ exports.updateProduct = async (req, res) => {
     res.json({ ok: true, data });
   } catch (e) {
     console.error('shops.updateProduct error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.setProductStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body;
+    const phone = normalizePhone(req.shop?.phone);
+
+    const allowed = { show: 'active', hide: 'hidden', delist: 'sold_out' };
+    const newStatus = allowed[action];
+    if (!newStatus) {
+      return res.status(400).json({ error: 'Действие: show, hide или delist' });
+    }
+
+    const { data: product, error: fetchErr } = await getClient()
+      .from('products')
+      .select('id,seller_phone,status')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !product) {
+      return res.status(404).json({ error: 'Публикация не найдена' });
+    }
+    if (normalizePhone(product.seller_phone) !== phone) {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+    if (newStatus === 'active' && product.status === 'pending') {
+      return res.status(400).json({ error: 'Публикация ещё на проверке' });
+    }
+
+    const { data, error } = await getClient()
+      .from('products')
+      .update({ status: newStatus })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('shops.setProductStatus error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.bulkUpdateAvailability = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.shop?.phone);
+    const { availability_type, prepare_hours } = req.body;
+
+    if (!availability_type) {
+      return res.status(400).json({ error: 'Укажите availability_type' });
+    }
+    const at = availability_type === 'on_order' ? 'on_order' : 'in_stock';
+    const updates = { availability_type: at };
+    if (at === 'on_order') {
+      const hrs = Number(prepare_hours);
+      if (!hrs || hrs < 1) {
+        return res.status(400).json({ error: 'Укажите срок готовности в часах' });
+      }
+      updates.prepare_hours = hrs;
+    } else {
+      updates.prepare_hours = null;
+    }
+
+    const { data: shopRow } = await getClient()
+      .from('shops')
+      .select('phone')
+      .eq('id', req.shop.shop_id)
+      .maybeSingle();
+    const dbPhone = shopRow?.phone || phone;
+
+    const { data, error } = await getClient()
+      .from('products')
+      .update(updates)
+      .or(`seller_phone.eq.${dbPhone},seller_phone.eq.${phone}`)
+      .neq('status', 'pending')
+      .select('id');
+
+    if (error) throw error;
+    res.json({ ok: true, updated: (data || []).length });
+  } catch (e) {
+    console.error('shops.bulkUpdateAvailability error:', e.message);
     res.status(500).json({ error: e.message });
   }
 };

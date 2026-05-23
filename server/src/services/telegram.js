@@ -1184,12 +1184,13 @@ async function publishToChannel(p) {
 
   const EMOJIS = { bouquet: '💐', basket: '🧺', bear: '🧸', sweets: '🍰' };
   const em     = EMOJIS[p.category] || '🌸';
-  const isShop = p.listing_type === 'shop';
-  const COMMISSION = p.category === 'sweets' ? 0.10 : 0.20;
-  const sellerRaw  = Number(p.price) || 0;
+  const isShop = p.listing_type === 'shop' || p.pricing_mode === 'inclusive';
+  const Commission = require('./commission');
+  const listed = Number(p.price) || 0;
+  const pct = p.category === 'sweets' ? 10 : (isShop ? 25 : 20);
   const buyerPrice = p.is_admin_price
-    ? sellerRaw
-    : Math.ceil(sellerRaw * (1 + COMMISSION) / 10) * 10;
+    ? listed
+    : Commission.calculate(listed, pct, isShop ? 'inclusive' : 'exclusive').customer_pays;
   const admin  = process.env.ADMIN_TELEGRAM
     ? process.env.ADMIN_TELEGRAM.replace('https://t.me/', '@')
     : '@rebuket_admin';
@@ -1207,6 +1208,9 @@ async function publishToChannel(p) {
       `${em} <b>${escHtml(p.title)}</b>\n` +
       `📍 ${escHtml(p.city || '—')}\n` +
       (p.size ? `📏 <b>Размер: ${escHtml(p.size)}</b>\n` : '') +
+      (p.availability_type === 'on_order'
+        ? `⏳ <b>На заказ${p.prepare_hours ? ` · ${p.prepare_hours} ч` : ''}</b>\n`
+        : (p.availability_type ? `✅ <b>В наличии</b>\n` : '')) +
       `\n💰 <b>${buyerPrice.toLocaleString('ru-RU')} сомони</b>\n` +
       (code ? `🆔 ${code}\n` : '') +
       `\n📲 Заказать: ${admin}\n` +
@@ -1330,13 +1334,21 @@ const CATS = { bouquet: '💐 Букет', basket: '🧺 Корзина', bear: 
 
 async function notifyProduct(p) {
   const url = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
-  const isShop = p.listing_type === 'shop';
-  const COMMISSION = p.category === 'sweets' ? 0.10 : 0.20;
-  const sellerPrice = Number(p.price) || 0;
-  const buyerPrice  = Math.ceil((sellerPrice * (1 + COMMISSION)) / 10) * 10;
+  const isShop = p.listing_type === 'shop' || p.pricing_mode === 'inclusive';
+  const Commission = require('./commission');
+  const listed = Number(p.price) || 0;
+  const pct = p.category === 'sweets' ? 10 : (isShop ? 25 : 20);
+  const mode = isShop ? 'inclusive' : 'exclusive';
+  const br = Commission.calculate(listed, pct, mode);
+  const buyerPrice = br.customer_pays;
+  const sellerPayout = br.seller_payout;
+  const fee = br.platform_fee;
 
   let text;
   if (isShop) {
+    const avail = p.availability_type === 'on_order'
+      ? `⏳ На заказ${p.prepare_hours ? ` · ${p.prepare_hours} ч` : ''}`
+      : '✅ В наличии';
     text =
       `🏪 <b>НОВАЯ ПУБЛИКАЦИЯ ОТ МАГАЗИНА</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -1344,10 +1356,11 @@ async function notifyProduct(p) {
       `🏬 <b>Магазин:</b> ${escHtml(p.seller_name || '—')}\n` +
       `📞 <b>Телефон:</b> ${escHtml(p.seller_phone)}\n` +
       (p.seller_telegram ? `✈️ <b>Telegram:</b> ${escHtml(p.seller_telegram)}\n` : '') +
-      `📍 <b>Город:</b> ${escHtml(p.city || '—')}\n\n` +
-      `💵 <b>Цена продавца:</b> ${sellerPrice.toLocaleString('ru')} TJS\n` +
+      `📍 <b>Город:</b> ${escHtml(p.city || '—')}\n` +
+      `📦 <b>Наличие:</b> ${avail}\n\n` +
       `💰 <b>Цена для покупателя:</b> ${buyerPrice.toLocaleString('ru')} TJS\n` +
-      `📊 <b>Комиссия (${Math.round(COMMISSION * 100)}%):</b> ${(buyerPrice - sellerPrice).toLocaleString('ru')} TJS\n\n` +
+      `💵 <b>Доля магазина:</b> ${sellerPayout.toLocaleString('ru')} TJS\n` +
+      `📊 <b>Комиссия (${pct}%):</b> ${fee.toLocaleString('ru')} TJS\n\n` +
       `🔗 <a href="${url}">Открыть объявление</a>`;
   } else {
     text =
@@ -1735,7 +1748,7 @@ function initShopBot() {
             await userBot.sendMessage(updated.customer_chat_id,
               refundAction === 'approve'
                 ? `✅ <b>Возврат одобрен</b>\n\nЗаказ #${orderId} — магазин одобрил возврат. Свяжитесь с @rebuket_admin.`
-                : `⚠️ <b>Магазин оспорил возврат</b>\n\nЗаказ #${orderId}. Администратор рассмотрит ваш случай.`,
+                : `⚠️ <b>Магазин оспорил возврат</b>\n\nЗаказ #${orderId}. Для рассмотрения напишите @rebuket_admin`,
               { parse_mode: 'HTML' });
           } catch(_) {}
         }
@@ -2306,9 +2319,10 @@ async function notifyShopRaw(chatId, html) {
 
 async function notifyProductEdited(p, shopPhone) {
   const url = `${getMiniAppUrl()}/#product-${p.slug || p.id}`;
-  const COMMISSION = p.category === 'sweets' ? 0.10 : 0.20;
-  const sellerPrice = Number(p.price) || 0;
-  const buyerPrice  = Math.ceil(sellerPrice * (1 + COMMISSION) / 10) * 10;
+  const Commission = require('./commission');
+  const listed = Number(p.price) || 0;
+  const pct = p.category === 'sweets' ? 10 : 25;
+  const br = Commission.calculate(listed, pct, 'inclusive');
 
   const text =
     `✏️ <b>МАГАЗИН ИЗМЕНИЛ ПУБЛИКАЦИЮ</b>\n━━━━━━━━━━━━━━━━━━━━\n` +
@@ -2316,8 +2330,8 @@ async function notifyProductEdited(p, shopPhone) {
     `🏬 <b>Магазин:</b> ${escHtml(p.seller_name || shopPhone || '—')}\n` +
     `📞 <b>Телефон:</b> ${escHtml(p.seller_phone || shopPhone)}\n` +
     `📍 <b>Город:</b> ${escHtml(p.city || '—')}\n\n` +
-    `💵 <b>Цена продавца:</b> ${sellerPrice.toLocaleString('ru')} TJS\n` +
-    `💰 <b>Цена для покупателя:</b> ${buyerPrice.toLocaleString('ru')} TJS\n\n` +
+    `💰 <b>Цена для покупателя:</b> ${br.customer_pays.toLocaleString('ru')} TJS\n` +
+    `💵 <b>Доля магазина:</b> ${br.seller_payout.toLocaleString('ru')} TJS\n\n` +
     (p.description ? `📝 ${escHtml(p.description.substring(0, 120))}${p.description.length > 120 ? '…' : ''}\n\n` : '') +
     `🔗 <a href="${url}">Открыть объявление</a>`;
 

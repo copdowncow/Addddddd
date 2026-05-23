@@ -13,7 +13,9 @@ export const clrTok = () => {
   localStorage.removeItem('rbt_tok');
 };
 
-export const isAuth = () => !!_tok;
+export const isAuth = () => !!(_tok || localStorage.getItem('rbt_tok'));
+
+export const getTok = () => _tok || localStorage.getItem('rbt_tok') || '';
 
 async function req(method, url, body = null, isForm = false, skipAuthError = false) {
   const headers = {};

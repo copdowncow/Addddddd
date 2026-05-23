@@ -23,9 +23,35 @@ function getCommission(category) {
   return category === 'sweets' ? 0.10 : 0.25;
 }
 
+function isInclusivePricing(p) {
+  return p.pricing_mode === 'inclusive' || p.listing_type === 'shop' || p.is_shop_listing === true;
+}
+
 function priceWithCommission(p) {
+  if (p.buyer_price != null && !Number.isNaN(Number(p.buyer_price))) return Number(p.buyer_price);
   if (p.is_admin_price) return Number(p.price);
+  if (isInclusivePricing(p)) return Number(p.price);
   return Math.ceil((Number(p.price) * (1 + getCommission(p.category))).toFixed(2) / 10) * 10;
+}
+
+function sellerPayoutAmount(p) {
+  if (p.seller_payout_amount != null && !Number.isNaN(Number(p.seller_payout_amount))) {
+    return Number(p.seller_payout_amount);
+  }
+  const listed = Number(p.price) || 0;
+  if (isInclusivePricing(p)) {
+    const rate = getCommission(p.category);
+    return Math.round(listed * (1 - rate) * 100) / 100;
+  }
+  return listed;
+}
+
+function availabilityLabel(p) {
+  if (p.availability_type === 'on_order') {
+    return '⏳ На заказ' + (p.prepare_hours ? ' · ' + p.prepare_hours + ' ч' : '');
+  }
+  if (p.availability_type === 'in_stock') return '✅ В наличии';
+  return '';
 }
 
 function fmtPrice(p) { return Number(p).toLocaleString('ru-RU') + ' TJS'; }
@@ -328,19 +354,32 @@ async function renderShopProfile() {
 
 function shopPubCard(p) {
   const statusKey = p.status || 'pending';
-  const STATUS_LABEL = { active: 'Активно', pending: 'На проверке', hidden: 'Скрыто' };
+  const STATUS_LABEL = { active: 'Активно', pending: 'На проверке', hidden: 'Скрыто', sold_out: 'Снято с продажи' };
   const statusLabel = STATUS_LABEL[statusKey] || statusKey;
   const date = p.created_at ? new Date(p.created_at).toLocaleDateString('ru-RU') : '—';
   const CAT_LABEL = { bouquet: '💐 Букет', basket: '🧺 Корзина', bear: '🧸 Игрушка', sweets: '🍰 Сладости' };
   const catLabel = CAT_LABEL[p.category] || esc(p.category);
   const buyerPrice = fmtPrice(priceWithCommission(p));
-  const sellerPrice = fmtPrice(Number(p.price));
+  const sellerPrice = fmtPrice(sellerPayoutAmount(p));
+  const avail = availabilityLabel(p);
   const photos = Array.isArray(p.photos) ? p.photos : [];
   const thumbHtml = photos[0]
     ? '<div class="shop-pub-thumb"><img src="' + esc(imgUrl(photos[0], 400)) + '" alt="' + esc(p.title) + '" loading="lazy" decoding="async"></div>'
     : '<div class="shop-pub-thumb" style="display:flex;align-items:center;justify-content:center;font-size:2.5rem;background:#f0faf5">🌸</div>';
   const desc = (p.description || '').substring(0, 100);
-  const pAttr = encodeURIComponent(JSON.stringify(p));
+
+  let actionBtns = '<button class="shop-pub-btn edit" onclick="openEditPubModal(\'' + esc(p.id) + '\')">✏️ Изменить</button>';
+  if (statusKey !== 'pending') {
+    if (statusKey === 'active') {
+      actionBtns += '<button class="shop-pub-btn view" onclick="setShopProductStatus(\'' + esc(p.id) + '\',\'hide\')">🙈 Скрыть</button>';
+      actionBtns += '<button class="shop-pub-btn delete" onclick="setShopProductStatus(\'' + esc(p.id) + '\',\'delist\')">⛔ Снять</button>';
+    } else {
+      actionBtns += '<button class="shop-pub-btn view" onclick="setShopProductStatus(\'' + esc(p.id) + '\',\'show\')">👁 Показать</button>';
+      if (statusKey !== 'sold_out') {
+        actionBtns += '<button class="shop-pub-btn delete" onclick="setShopProductStatus(\'' + esc(p.id) + '\',\'delist\')">⛔ Снять</button>';
+      }
+    }
+  }
 
   return (
     '<div class="shop-pub-card">' +
@@ -351,16 +390,59 @@ function shopPubCard(p) {
           '<span class="shop-card-status ' + esc(statusKey) + '">' + esc(statusLabel) + '</span>' +
         '</div>' +
         '<div class="shop-pub-meta">' + catLabel + (p.city ? ' &middot; 📍 ' + esc(p.city) : '') + ' &middot; ' + esc(date) + '</div>' +
+        (avail ? '<div class="shop-pub-meta">' + esc(avail) + '</div>' : '') +
         (desc ? '<div class="shop-pub-meta">' + esc(desc) + (p.description && p.description.length > 100 ? '…' : '') + '</div>' : '') +
         '<div class="shop-pub-price">' + buyerPrice + ' <span style="font-size:.75rem;font-weight:600;color:var(--gray)">(вам: ' + sellerPrice + ')</span></div>' +
       '</div>' +
-      '<div class="shop-pub-actions">' +
-        '<button class="shop-pub-btn edit" onclick="openEditPubModal(\'' + esc(p.id) + '\')">✏️ Изменить</button>' +
-        '<button class="shop-pub-btn delete" onclick="deleteShopProduct(\'' + esc(p.id) + '\')">🗑 Удалить</button>' +
-      '</div>' +
+      '<div class="shop-pub-actions">' + actionBtns + '</div>' +
     '</div>'
   );
 }
+
+window.setShopProductStatus = async function(id, action) {
+  const labels = { show: 'показать', hide: 'скрыть', delist: 'снять с продажи' };
+  if (!confirm('Вы уверены, что хотите ' + (labels[action] || action) + ' эту публикацию?')) return;
+  try {
+    await shopFetch('PATCH', '/shops/products/' + encodeURIComponent(id) + '/status', { action });
+    toast('Готово', 'ok');
+    _editPubCache = {};
+    await renderShopProfile();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+};
+
+window.selectBulkAvail = function(val, btn) {
+  document.getElementById('bulk-availability-type').value = val;
+  document.querySelectorAll('#bulk-avail-chips .chip').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const wrap = document.getElementById('bulk-prep-hours-wrap');
+  if (wrap) wrap.style.display = val === 'on_order' ? 'block' : 'none';
+};
+
+window.applyBulkAvailability = async function() {
+  const availability_type = document.getElementById('bulk-availability-type')?.value;
+  if (!availability_type) {
+    toast('Выберите статус: в наличии или на заказ', 'err');
+    return;
+  }
+  const prepare_hours = document.getElementById('bulk-prep-hours')?.value;
+  if (availability_type === 'on_order' && (!prepare_hours || Number(prepare_hours) < 1)) {
+    toast('Укажите срок готовности в часах', 'err');
+    return;
+  }
+  if (!confirm('Применить статус ко всем публикациям магазина?')) return;
+  try {
+    const r = await shopFetch('PATCH', '/shops/products/bulk-availability', {
+      availability_type,
+      prepare_hours: availability_type === 'on_order' ? prepare_hours : undefined
+    });
+    toast('Обновлено публикаций: ' + (r.updated || 0), 'ok');
+    await renderShopProfile();
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+};
 
 // Shop Admin Panel Functions
 window.shopAdminLogin = async () => {
@@ -603,12 +685,16 @@ window.openEditPubModal = async function(id) {
         <input type="text" id="epm-size" value="${esc(p.size||'')}" placeholder="Например: Средний, 45 см" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
       </div>
       <div class="form-group" style="margin-bottom:14px">
-        <label>Адрес получения</label>
-        <input type="text" id="epm-address" value="${esc(p.address||'')}" placeholder="ул. Рудаки, 12" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+        <label>Статус товара</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="epm-avail-chips">
+          <button type="button" class="chip${(p.availability_type||'in_stock')==='in_stock'?' active':''}" onclick="selectEpmAvail('in_stock',this)">✅ В наличии</button>
+          <button type="button" class="chip${p.availability_type==='on_order'?' active':''}" onclick="selectEpmAvail('on_order',this)">⏳ На заказ</button>
+        </div>
+        <input type="hidden" id="epm-availability-type" value="${esc(p.availability_type||'in_stock')}">
       </div>
-      <div class="form-group" style="margin-bottom:24px">
-        <label>Время получения</label>
-        <input type="text" id="epm-pickup_time" value="${esc(p.pickup_time||'')}" placeholder="с 10:00 до 18:00" style="width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
+      <div class="form-group" id="epm-prep-wrap" style="margin-bottom:14px;${p.availability_type==='on_order'?'':'display:none'}">
+        <label>Готовность (часов)</label>
+        <input type="number" id="epm-prep-hours" value="${esc(String(p.prepare_hours||''))}" min="1" placeholder="24" style="width:100%;max-width:200px;padding:11px 13px;border:1.5px solid var(--border);border-radius:12px;font-size:.95rem;box-sizing:border-box">
       </div>
 
       <button onclick="saveEditPub()" class="btn btn-primary" style="width:100%;padding:14px;border-radius:14px;font-size:.95rem" id="epm-save-btn">
@@ -618,24 +704,38 @@ window.openEditPubModal = async function(id) {
     </div>`;
 };
 
+window.selectEpmAvail = function(val, btn) {
+  const hid = document.getElementById('epm-availability-type');
+  if (hid) hid.value = val;
+  document.querySelectorAll('#epm-avail-chips .chip').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const wrap = document.getElementById('epm-prep-wrap');
+  if (wrap) wrap.style.display = val === 'on_order' ? 'block' : 'none';
+};
+
 window.saveEditPub = async function() {
   const id          = document.getElementById('epm-id')?.value;
   const title       = document.getElementById('epm-title')?.value.trim();
   const description = document.getElementById('epm-description')?.value.trim();
   const category    = document.getElementById('epm-category')?.value;
   const size        = document.getElementById('epm-size')?.value.trim();
-  const address     = document.getElementById('epm-address')?.value.trim();
-  const pickup_time = document.getElementById('epm-pickup_time')?.value.trim();
+  const availability_type = document.getElementById('epm-availability-type')?.value || 'in_stock';
+  const prepare_hours = document.getElementById('epm-prep-hours')?.value;
   const btn         = document.getElementById('epm-save-btn');
   const msgEl       = document.getElementById('epm-msg');
 
   if (!title) { msgEl.style.color='var(--red)'; msgEl.textContent='Заполните название'; return; }
+  if (availability_type === 'on_order' && (!prepare_hours || Number(prepare_hours) < 1)) {
+    msgEl.style.color='var(--red)'; msgEl.textContent='Укажите срок готовности в часах'; return;
+  }
 
   btn.disabled = true; btn.textContent = 'Сохраняем…';
   msgEl.textContent = '';
   try {
     await shopFetch('PATCH', '/shops/products/' + encodeURIComponent(id), {
-      title, description, category, size, address, pickup_time
+      title, description, category, size,
+      availability_type,
+      prepare_hours: availability_type === 'on_order' ? prepare_hours : undefined
     });
     _editPubCache = {};
     toast('✅ Публикация обновлена', 'ok');
@@ -896,7 +996,11 @@ function renderDetail(p, el) {
         'style="width:100%;max-height:360px;object-fit:cover;display:block;border-radius:16px;cursor:zoom-in">'
     : '<div class="pd-main-ph ' + (CAT_CLS[p.category]||'') + '">' + (CAT_EM[p.category]||'🌸') + '</div>';
 
-  const infoHtml = (p.address||p.pickup_time) ? '<div class="pd-info">' +
+  const shopCardEarly = isShopListing(p);
+  const availChip = shopCardEarly && availabilityLabel(p)
+    ? '<span class="pd-chip" style="background:#e8f5e9;color:#2e7d32">' + esc(availabilityLabel(p)) + '</span>'
+    : '';
+  const infoHtml = (!shopCardEarly && (p.address || p.pickup_time)) ? '<div class="pd-info">' +
     (p.address     ? '<div><div class="pd-info-lbl">Адрес</div><div>📍 ' + esc(p.address) + '</div></div>' : '') +
     (p.pickup_time ? '<div><div class="pd-info-lbl">Время</div><div>🕐 ' + esc(p.pickup_time) + '</div></div>' : '') +
     '</div>' : '';
@@ -930,6 +1034,7 @@ function renderDetail(p, el) {
         '<div class="pd-chips">' +
           '<span class="pd-chip rose">' + esc(CAT_LABEL[p.category]||p.category) + '</span>' +
           '<span class="pd-chip">📍 ' + esc(p.city) + '</span>' +
+          availChip +
           '<span class="pd-chip">👁 ' + (p.view_count||0) + ' просмотров</span>' +
         '</div>' +
         '<h2>' + esc(p.title) + '</h2>' +
@@ -1279,19 +1384,37 @@ window.updateBearSizeInput = () => {
   if (err && val) err.style.display = 'none';
 };
 
+window.selectShopAvail = function(val, btn) {
+  const hid = document.getElementById('sell-availability-type');
+  if (hid) hid.value = val;
+  document.querySelectorAll('#shop-avail-chips .chip').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const wrap = document.getElementById('shop-prep-hours-wrap');
+  if (wrap) wrap.style.display = val === 'on_order' ? 'block' : 'none';
+};
+
 window.updatePricePreview = () => {
   const val = Number(document.getElementById('sell-price').value);
   const cat = document.getElementById('sell-cat-val')?.value || '';
   const preview = document.getElementById('price-preview');
   if (!val || val <= 0) { if(preview) preview.style.display = 'none'; return; }
   const rate = getCommission(cat);
-  const total = Math.ceil((val * (1 + rate)).toFixed(2) / 10) * 10;
-  const commission = total - val;
+  const isShop = !!getShopSession().phone;
+  let customerPays, sellerGets, commission;
+  if (isShop) {
+    customerPays = val;
+    commission = Math.round(val * rate);
+    sellerGets = val - commission;
+  } else {
+    customerPays = Math.ceil((val * (1 + rate)).toFixed(2) / 10) * 10;
+    commission = customerPays - val;
+    sellerGets = val;
+  }
   const sellerEl = document.getElementById('price-seller');
   const totalEl  = document.getElementById('price-total');
   const commEl   = document.getElementById('price-commission');
-  if (sellerEl) sellerEl.textContent = fmtPrice(val);
-  if (totalEl)  totalEl.textContent  = fmtPrice(total);
+  if (sellerEl) sellerEl.textContent = fmtPrice(sellerGets);
+  if (totalEl)  totalEl.textContent  = fmtPrice(customerPays);
   if (commEl)   commEl.textContent   = fmtPrice(commission) + ' (' + Math.round(rate * 100) + '%)';
   if(preview) preview.style.display = 'block';
 };
@@ -1337,21 +1460,28 @@ document.addEventListener('DOMContentLoaded', () => {
 export function updateSellPageLayout() {
   const shop = getShopSession();
   const elements = document.querySelectorAll('#page-sell [data-shop-hide]');
+  const shopOnly = document.querySelectorAll('#page-sell [data-shop-only]');
   const box = document.getElementById('sell-contact-box');
   const hint = document.getElementById('photo-hint');
+  const priceLabel = document.getElementById('sell-price-label');
 
   if (shop.phone) {
     elements.forEach(el => { el.style.display = 'none'; });
+    shopOnly.forEach(el => { el.style.display = ''; });
     if (box) box.style.display = 'none';
+    if (priceLabel) priceLabel.textContent = 'Цена для покупателя (TJS) *';
   } else {
     elements.forEach(el => { el.style.display = ''; });
+    shopOnly.forEach(el => { el.style.display = 'none'; });
     if (box) box.style.display = '';
+    if (priceLabel) priceLabel.textContent = 'Ваша цена (TJS) *';
   }
 
   if (hint) {
     const minNeeded = shop.phone ? 1 : 3;
     hint.textContent = 'Загружено ' + (window.sellFiles ? window.sellFiles.length : 0) + ' из ' + minNeeded + ' (минимум ' + minNeeded + ' фото)';
   }
+  updatePricePreview();
 }
 window.updateSellPageLayout = updateSellPageLayout;
 
@@ -1422,6 +1552,16 @@ window.submitListing = async () => {
     return;
   }
 
+  if (isShopUser) {
+    const avail = document.getElementById('sell-availability-type')?.value || 'in_stock';
+    const prepH = document.getElementById('sell-prep-hours')?.value;
+    if (avail === 'on_order' && (!prepH || Number(prepH) < 1)) {
+      toast('Укажите срок готовности в часах', 'err');
+      document.getElementById('shop-prep-hours-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+  }
+
   const fd = new FormData();
   fd.append('title',           title);
   fd.append('description',     document.getElementById('sell-desc').value.trim());
@@ -1443,6 +1583,11 @@ window.submitListing = async () => {
   const marketPrice = document.getElementById('sell-market-price')?.value;
   if (marketPrice) fd.append('market_price', marketPrice);
   fd.append('stock',          document.getElementById('sell-stock')?.value || '');
+  if (isShopUser) {
+    fd.append('availability_type', document.getElementById('sell-availability-type')?.value || 'in_stock');
+    const prep = document.getElementById('sell-prep-hours')?.value;
+    if (prep) fd.append('prepare_hours', prep);
+  }
   sellFiles.forEach(f => fd.append('photos', f));
   const tgId = getTelegramUserId();
   if (tgId) fd.append('seller_chat_id', tgId);

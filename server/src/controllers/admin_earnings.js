@@ -252,13 +252,26 @@ exports.resolveDispute = async (req, res) => {
     const updates = { status: newStatus };
     if (action === 'reject') updates.confirmed_at = new Date().toISOString();
 
-    const { data: updated, error } = await getClient()
+    let { data: updated, error } = await getClient()
       .from('orders')
       .update(updates)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
+
+    if (error || !updated) {
+      const minimal = { status: newStatus };
+      const retry = await getClient()
+        .from('orders')
+        .update(minimal)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+      updated = retry.data;
+      error = retry.error;
+    }
     if (error) throw error;
+    if (!updated) return res.status(500).json({ error: 'Не удалось обновить заказ. Выполните SQL миграцию статусов в Supabase.' });
 
     // Notify both sides via bots
     try {

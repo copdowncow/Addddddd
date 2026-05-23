@@ -6,7 +6,7 @@ function adminAuth(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: '����� �� ������������' });
+    return res.status(401).json({ error: 'Токен не предоставлен' });
   }
 
   const token = authHeader.split(' ')[1];
@@ -15,7 +15,7 @@ function adminAuth(req, res, next) {
     req.admin = jwt.verify(token, JWT_SECRET);
     next();
   } catch (err) {
-    return res.status(401).json({ error: '����� �������������� ��� ����. ������� ������.' });
+    return res.status(401).json({ error: 'Токен недействителен или истёк. Войдите снова.' });
   }
 }
 
@@ -41,7 +41,7 @@ function shopAuth(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: '����� �� ������������' });
+    return res.status(401).json({ error: 'Токен не предоставлен' });
   }
 
   const token = authHeader.split(' ')[1];
@@ -49,12 +49,12 @@ function shopAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     if (payload.role !== 'shop') {
-      return res.status(403).json({ error: '��� �������' });
+      return res.status(403).json({ error: 'Нет доступа' });
     }
     req.shop = payload;
     next();
   } catch (err) {
-    return res.status(401).json({ error: '����� �������������� ��� ����. ������� ������.' });
+    return res.status(401).json({ error: 'Токен недействителен или истёк. Войдите снова.' });
   }
 }
 

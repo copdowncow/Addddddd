@@ -72,14 +72,17 @@ function calculate(listedPrice, pct, mode) {
 function effectivePercent(product, shop, settings) {
   if (product && product.commission_percent != null) return Number(product.commission_percent);
   if (shop && shop.commission_percent != null) return Number(shop.commission_percent);
+  const isShop = product?.listing_type === 'shop' || product?.pricing_mode === 'inclusive';
+  if (isShop) return product?.category === 'sweets' ? 10 : 25;
   return Number(settings?.default_commission_percent ?? 20);
 }
 
 // Pick effective pricing mode for a product
-//   New shop products created after migration → 'inclusive'
-//   Legacy products (mode null) → 'exclusive' (current behaviour preserved)
+//   Shop / inclusive → listed price is customer price
+//   Legacy products (mode null, eco) → 'exclusive'
 function effectiveMode(product) {
   if (product && product.pricing_mode) return product.pricing_mode;
+  if (product && product.listing_type === 'shop') return 'inclusive';
   return 'exclusive';
 }
 

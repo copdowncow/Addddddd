@@ -1,5 +1,5 @@
 'use strict';
-import { api, setTok, clrTok, isAuth } from './api.js';
+import { api, setTok, clrTok, isAuth, getTok } from './api.js';
 import { esc, fmt, fmtD, toast }        from './utils.js';
 
 function getCommission(category) {
@@ -97,13 +97,24 @@ async function renderDisputes() {
   const q = new URLSearchParams();
   if (_disputesFilter) q.set('status', _disputesFilter);
   if (_disputesSearch) q.set('search', _disputesSearch);
+  const token = getTok();
+  if (!token) {
+    document.getElementById('dis-list').innerHTML = '<div class="empty"><span>🔐</span><h3>Войдите в админку</h3><p style="color:var(--gray)">Сессия не найдена.</p></div>';
+    return;
+  }
   try {
     const r = await fetch('/api/admin/disputes?' + q.toString(), {
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' }
     });
-    const d = await r.json();
+    let d = {};
+    try { d = await r.json(); } catch (_) {}
     const list = document.getElementById('dis-list');
-    if (!r.ok) throw new Error(d.error || 'Ошибка');
+    if (r.status === 401) {
+      clrTok();
+      list.innerHTML = '<div class="empty"><span>🔐</span><h3>Сессия истекла</h3><p style="color:var(--gray)">Войдите в админку заново.</p></div>';
+      return;
+    }
+    if (!r.ok) throw new Error(d.error || 'Не удалось загрузить споры');
     const rows = d.data || [];
     if (!rows.length) {
       list.innerHTML = '<div class="empty"><span>✅</span><h3>Споров нет</h3><p style="color:var(--gray)">Все заказы в норме.</p></div>';
@@ -153,7 +164,8 @@ async function renderDisputes() {
       </div>`;
     }).join('');
   } catch (e) {
-    document.getElementById('dis-list').innerHTML = `<div class="empty"><span>❌</span><h3>${e.message}</h3></div>`;
+    const msg = esc(String(e.message || 'Ошибка загрузки'));
+    document.getElementById('dis-list').innerHTML = `<div class="empty"><span>❌</span><h3>${msg}</h3><p style="color:var(--gray);margin-top:8px">Проверьте, что в Supabase выполнен SQL для статусов споров.</p></div>`;
   }
 }
 
@@ -171,7 +183,7 @@ window.resolveDispute = async (id, action) => {
   try {
     const res = await fetch('/api/admin/orders/' + encodeURIComponent(id) + '/dispute-resolve', {
       method: 'PATCH',
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token'), 'Content-Type': 'application/json' },
+      headers: { 'Authorization': 'Bearer ' + getTok(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, note: note.trim() }),
     });
     const d = await res.json();
@@ -188,7 +200,7 @@ window.resolveDispute = async (id, action) => {
 async function updateDisputesBadge() {
   try {
     const r = await fetch('/api/admin/disputes', {
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+      headers: { 'Authorization': 'Bearer ' + getTok() }
     });
     const d = await r.json();
     if (!r.ok) return;
@@ -210,7 +222,7 @@ async function renderEarnings() {
     </div>
     <style>@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}</style>`;
   try {
-    const token = localStorage.getItem('admin_token');
+    const token = getTok();
     const r = await fetch('/api/admin/earnings', { headers: { Authorization: 'Bearer ' + token } });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || 'Ошибка');
@@ -271,7 +283,7 @@ async function renderSettings() {
   const el = document.getElementById('tab-settings');
   el.innerHTML = '<div class="loader">Загружаем…</div>';
   try {
-    const token = localStorage.getItem('admin_token');
+    const token = getTok();
     const r = await fetch('/api/admin/settings', { headers: { Authorization: 'Bearer ' + token } });
     const s = await r.json();
     if (!r.ok) throw new Error(s.error || 'Ошибка');
@@ -298,7 +310,7 @@ async function renderSettings() {
 window.saveAdminSettings = async () => {
   const btn = document.getElementById('save-settings-btn');
   const msg = document.getElementById('settings-msg');
-  const token = localStorage.getItem('admin_token');
+  const token = getTok();
   const body = {
     default_commission_percent: Number(document.getElementById('set-commission').value),
     taxi_fixed_fee:              Number(document.getElementById('set-taxi').value),
@@ -729,7 +741,7 @@ async function renderOrders() {
   el.innerHTML = `<div id="o-table"><div class="loader">Загружаем…</div></div>`;
   try {
     const r = await fetch('/api/admin/orders', {
-      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('admin_token') }
+      headers: { 'Authorization': 'Bearer ' + getTok() }
     }).then(res => res.json());
     const t = document.getElementById('o-table');
     if (!r.data || !r.data.length) { t.innerHTML='<div class="empty"><span>📭</span><h3>Нет заказов</h3></div>'; return; }
@@ -818,7 +830,7 @@ window.confirmOrder = async (id) => {
     const res = await fetch(`/api/admin/orders/${id}/status`, {
       method: 'PATCH',
       headers: { 
-        'Authorization': 'Bearer ' + localStorage.getItem('admin_token'),
+        'Authorization': 'Bearer ' + getTok(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ status: 'confirmed' })
@@ -835,7 +847,7 @@ window.rejectOrder = async (id) => {
     const res = await fetch(`/api/admin/orders/${id}/status`, {
       method: 'PATCH',
       headers: { 
-        'Authorization': 'Bearer ' + localStorage.getItem('admin_token'),
+        'Authorization': 'Bearer ' + getTok(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ status: 'rejected' })

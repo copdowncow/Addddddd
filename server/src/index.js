@@ -97,6 +97,8 @@ router.get('/shops/me',             shopAuth, S.me);
 router.patch('/shops/me',           shopAuth, uploadPhotoOptional, S.updateProfile);
 router.get('/shops/products',       shopAuth, S.listProducts);
 router.patch('/shops/products/:id', shopAuth, S.updateProduct);
+router.patch('/shops/products/:id/status', shopAuth, S.setProductStatus);
+router.patch('/shops/products/bulk-availability', shopAuth, S.bulkUpdateAvailability);
 router.delete('/shops/products/:id', shopAuth, S.deleteProduct);
 
 router.get('/admin/products',         adminAuth, P.adminList);

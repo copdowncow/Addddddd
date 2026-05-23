@@ -2,6 +2,7 @@
 
 const { q, uploadPhoto, getClient } = require('../db/supabase');
 const { notifyProduct, notifySellerApproved, notifySellerRejected } = require('../services/telegram');
+const { enrichProductPricing } = require('../services/productPricing');
 const { v4: uuid } = require('uuid');
 
 const sharp = require('sharp');
@@ -203,8 +204,20 @@ exports.getProducts = async (req, res) => {
       }
     }
 
-    // Apply publicProduct transformation after shop data is merged
-    const publicProducts = products.map(d => publicProduct(d, shopPhones));
+    const shopMap = {};
+    if (shopPhones.length > 0) {
+      const { data: allShops } = await getClient()
+        .from('shops')
+        .select('phone, commission_percent')
+        .eq('status', 'active');
+      (allShops || []).forEach(s => { shopMap[normalizePhone(s.phone)] = s; });
+    }
+
+    const publicProducts = products.map(d => {
+      const pub = publicProduct(d, shopPhones);
+      const shop = shopMap[normalizePhone(d.seller_phone)];
+      return enrichProductPricing(pub, shop);
+    });
 
     res.json({
       data: publicProducts,
@@ -240,19 +253,24 @@ exports.getShopPublications = async (req, res) => {
       const shopsMap = {};
       const { data: shops, error: shopsError } = await getClient()
         .from('shops')
-        .select('phone, shop_name, photo_url')
+        .select('phone, shop_name, photo_url, commission_percent')
         .eq('phone', shopPhone);
       if (!shopsError && Array.isArray(shops)) {
         shops.forEach(s => { shopsMap[normalizePhone(s.phone)] = s; });
       }
 
       const normalizedShopPhone = normalizePhone(shopPhone);
-      const publicProducts = (data || []).map(d => publicProduct({
-        ...d,
-        listing_type: 'shop',
-        shop_name: shopsMap[normalizedShopPhone]?.shop_name || d.shop_name || d.seller_name,
-        photo_url: shopsMap[normalizedShopPhone]?.photo_url || d.photo_url
-      }, [normalizedShopPhone]));
+      const shopInfo = shopsMap[normalizedShopPhone];
+      const publicProducts = (data || []).map(d => {
+        const pub = publicProduct({
+          ...d,
+          listing_type: 'shop',
+          pricing_mode: d.pricing_mode || 'inclusive',
+          shop_name: shopInfo?.shop_name || d.shop_name || d.seller_name,
+          photo_url: shopInfo?.photo_url || d.photo_url
+        }, [normalizedShopPhone]);
+        return enrichProductPricing(pub, shopInfo);
+      });
       return res.json({
         data: publicProducts,
         total: count || 0,
@@ -305,7 +323,7 @@ exports.getProduct = async (req, res) => {
     if (isShopSeller) {
       const { data: shopInfo, error: shopErr } = await getClient()
         .from('shops')
-        .select('shop_name, photo_url')
+        .select('shop_name, photo_url, commission_percent')
         .eq('phone', sellerPhone)
         .single();
       if (!shopErr && shopInfo) {
@@ -335,7 +353,17 @@ exports.getProduct = async (req, res) => {
         .catch(e => console.log('view_count update error:', e.message));
     }
 
-    res.json(publicProduct({ ...product, view_count: newCount }, allShopPhones));
+    let shopRow = null;
+    if (isShopSeller && sellerPhone) {
+      const { data: s } = await getClient()
+        .from('shops')
+        .select('commission_percent')
+        .eq('phone', sellerPhone)
+        .maybeSingle();
+      shopRow = s;
+    }
+    const pub = publicProduct({ ...product, view_count: newCount }, allShopPhones);
+    res.json(enrichProductPricing(pub, shopRow));
   } catch (e) {
     console.error('[getProduct]', e);
     res.status(500).json({ error: e.message || 'Ошибка сервера' });
@@ -375,7 +403,8 @@ exports.createProduct = async (req, res) => {
       title, description, category, price, city,
       seller_name, seller_phone, seller_telegram,
       address, pickup_time, gift_when, market_price, size,
-      seller_chat_id, stock_quantity
+      seller_chat_id, stock_quantity, stock,
+      availability_type, prepare_hours
     } = req.body;
 
     if (!title || !category || !price || !seller_phone) {
@@ -423,6 +452,23 @@ exports.createProduct = async (req, res) => {
 
     const slug = await uniqueSlug(toSlug(title)).catch(() => `product-${Date.now()}`);
 
+    let availType = 'in_stock';
+    let prepHrs = null;
+    if (listing_type === 'shop') {
+      availType = availability_type === 'on_order' ? 'on_order' : 'in_stock';
+      if (availType === 'on_order') {
+        prepHrs = Number(prepare_hours);
+        if (!prepHrs || prepHrs < 1) {
+          return res.status(400).json({ error: 'Укажите срок готовности в часах (для «на заказ»)' });
+        }
+      }
+    }
+
+    const stockVal = stock_quantity ?? stock;
+    const stockQty = listing_type === 'shop'
+      ? (stockVal !== undefined && stockVal !== '' ? Number(stockVal) : 999999)
+      : 999999;
+
     // Сначала создаём объявление с пустыми фото — отвечаем клиенту быстро
     const { data, error } = await getClient()
       .from('products')
@@ -436,17 +482,19 @@ exports.createProduct = async (req, res) => {
         seller_phone,
         seller_telegram: seller_telegram || null,
         address:         address         || null,
-        pickup_time:     pickup_time     || null,
-        gift_when:       gift_when       || null,
+        pickup_time:     listing_type === 'shop' ? null : (pickup_time || null),
+        gift_when:       listing_type === 'shop' ? null : (gift_when || null),
         market_price:    market_price    ? Number(market_price) : null,
         size:            size            || null,
         seller_chat_id:  seller_chat_id  || null,
         pricing_mode,
         listing_type,
+        availability_type: listing_type === 'shop' ? availType : null,
+        prepare_hours:     listing_type === 'shop' && availType === 'on_order' ? prepHrs : null,
         photos: [],
         slug,
         status: 'pending',
-        stock_quantity:  stock_quantity ? Number(stock_quantity) : 999999
+        stock_quantity: stockQty
       })
       .select()
       .single();
