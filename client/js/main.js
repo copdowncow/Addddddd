@@ -62,7 +62,7 @@ function buildTelegramAdminUrl(message) {
 }
 
 function ecoTelegramBuyMessage(p) {
-  return 'Здравствуйте, хочу заказать этот букет:\n\n🔗 ' + productPageUrl(p);
+  return 'Здравствуйте, хочу заказать этот товар:\n\n🔗 ' + productPageUrl(p);
 }
 
 function sellerPayoutAmount(p) {

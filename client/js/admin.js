@@ -6,6 +6,30 @@ function getCommission(category) {
   return category === 'sweets' ? 0.10 : 0.25;
 }
 
+const ADMIN_ORDER_APPROVAL_WINDOW_MS = 10 * 60 * 1000;
+
+function formatTimeLeft(ms) {
+  if (ms <= 0) return null;
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    return d + 'д ' + (h % 24) + 'ч';
+  }
+  return h > 0 ? h + 'ч ' + m + 'м' : m + 'м';
+}
+
+function approvalTimerBadge(order) {
+  if (!order || order.status !== 'pending' || !order.created_at) return '';
+  const startMs = new Date(order.created_at).getTime();
+  if (!Number.isFinite(startMs)) return '';
+  const leftMs = startMs + ADMIN_ORDER_APPROVAL_WINDOW_MS - Date.now();
+  if (leftMs <= 0) return '<span class="timer-badge expired">⏰ Просрочено</span>';
+  const left = formatTimeLeft(leftMs);
+  const urgent = leftMs < 5 * 60 * 1000;
+  return '<span class="timer-badge' + (urgent ? ' urgent' : '') + '">⏰ ' + left + '</span>';
+}
+
 export function checkAdminAuth() {
   if (isAuth()) showDash();
 }
@@ -800,6 +824,7 @@ async function renderOrders() {
           <div class="acard-info">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
               <span class="${statusMap[st]||'bd-y'}" style="font-size:.72rem">${statusLabel[st]||st}</span>
+              ${approvalTimerBadge(o)}
               <span style="font-size:.75rem;color:var(--gray)">${fmtD(o.created_at)}</span>
             </div>
             <div class="acard-title">Заказ #${o.id}</div>
