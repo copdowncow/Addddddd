@@ -510,6 +510,9 @@ exports.createProduct = async (req, res) => {
       previewUrl: `/products/${data.slug}`
     });
 
+    // Отправляем уведомление админу сразу с данными продукта
+    notifyProduct(data).catch(err => console.error('Уведомление ошибка:', err));
+
     // Загружаем фото в фоне с обработкой (HEIC, resize, jpeg)
     Promise.all(
       files.map(async (f) => {
@@ -518,17 +521,7 @@ exports.createProduct = async (req, res) => {
       })
     )
       .then(photos => getClient().from('products').update({ photos }).eq('id', data.id))
-      .then(() => getClient().from('products').select('*').eq('id', data.id).single())
-      .then(updatedProduct => {
-        if (updatedProduct) {
-          return notifyProduct(updatedProduct);
-        } else {
-          console.error('[createProduct] Failed to load updated product for notification');
-          // Fallback: use original data with photos
-          return notifyProduct({ ...data, photos });
-        }
-      })
-      .catch(err => console.error('Фото/уведомление ошибка:', err));
+      .catch(err => console.error('Фото загрузка ошибка:', err));
 
   } catch (e) {
     console.error('[createProduct]', e);
