@@ -12,7 +12,7 @@ exports.listShops = async (req, res) => {
     console.log('[admin.listShops] ▶', { status: status || 'all', search: search || null });
     let q = getClient()
       .from('shops')
-      .select('id, phone, shop_name, city, telegram, status, photo_url, description, delivery_info, categories, verified, rating, rating_count, commission_percent, telegram_chat_id, created_at')
+      .select('id, phone, shop_name, city, telegram, status, photo_url, description, delivery_info, categories, verified, rating, rating_count, commission_percent, telegram_chat_id, is_blocked, created_at')
       .order('created_at', { ascending: false })
       .limit(500);
     if (status) q = q.eq('status', status);
@@ -161,7 +161,131 @@ exports.resetShopPassword = async (req, res) => {
   }
 };
 
-// DELETE /api/admin/shops/:id  — soft "ban": set status=rejected
+// DELETE /api/admin/shops/:id  — полностью удалить магазин
+exports.deleteShop = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('[admin.deleteShop] ▶ id=', id);
+    
+    // Сначала получаем данные магазина для уведомления
+    const { data: shop, error: fetchError } = await getClient()
+      .from('shops')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !shop) {
+      console.error('[admin.deleteShop] ✗ shop not found:', fetchError);
+      return res.status(404).json({ error: 'Магазин не найден' });
+    }
+
+    // Удаляем связанные товары
+    await getClient()
+      .from('products')
+      .delete()
+      .eq('seller_phone', shop.phone);
+
+    // Удаляем магазин
+    const { error } = await getClient()
+      .from('shops')
+      .delete()
+      .eq('id', id);
+    
+    if (error) { console.error('[admin.deleteShop] ✗ db error:', error); throw error; }
+    console.log('[admin.deleteShop] ✓ deleted shop:', { id: shop.id, phone: shop.phone });
+    
+    // Отправляем уведомление в Telegram если есть chat_id
+    if (shop.telegram_chat_id) {
+      try {
+        const { sendToShopChat } = require('../services/telegram');
+        await sendToShopChat(shop.telegram_chat_id, 
+          `⚠️ <b>Ваш магазин был удалён</b>\n\n` +
+          `Магазин: ${shop.shop_name || shop.phone}\n` +
+          `Если у вас есть вопросы, обратитесь к @rebuket_admin`
+        );
+      } catch (e) {
+        console.log('[admin.deleteShop] notification failed:', e.message);
+      }
+    }
+    
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[admin.deleteShop] ✗ FATAL', e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// PATCH /api/admin/shops/:id/block  — заблокировать магазин (is_blocked=true)
+exports.blockShop = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('[admin.blockShop] ▶ id=', id);
+    const { data, error } = await getClient()
+      .from('shops')
+      .update({ is_blocked: true })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) { console.error('[admin.blockShop] ✗ db error:', error); throw error; }
+    console.log('[admin.blockShop] ✓ blocked shop:', { id: data.id, phone: data.phone });
+    
+    // Отправляем уведомление в Telegram если есть chat_id
+    if (data.telegram_chat_id) {
+      try {
+        const { sendToShopChat } = require('../services/telegram');
+        await sendToShopChat(data.telegram_chat_id, 
+          `🚫 <b>Ваш магазин заблокирован</b>\n\n` +
+          `Магазин: ${data.shop_name || data.phone}\n\n` +
+          `Для разблокировки обратитесь к @rebuket_admin`
+        );
+      } catch (e) {
+        console.log('[admin.blockShop] notification failed:', e.message);
+      }
+    }
+    
+    res.json({ ok: true, shop: data });
+  } catch (e) {
+    console.error('[admin.blockShop] ✗ FATAL', e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// PATCH /api/admin/shops/:id/unblock  — разблокировать магазин (is_blocked=false)
+exports.unblockShop = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log('[admin.unblockShop] ▶ id=', id);
+    const { data, error } = await getClient()
+      .from('shops')
+      .update({ is_blocked: false })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) { console.error('[admin.unblockShop] ✗ db error:', error); throw error; }
+    console.log('[admin.unblockShop] ✓ unblocked shop:', { id: data.id, phone: data.phone });
+    
+    // Отправляем уведомление в Telegram если есть chat_id
+    if (data.telegram_chat_id) {
+      try {
+        const { sendToShopChat } = require('../services/telegram');
+        await sendToShopChat(data.telegram_chat_id, 
+          `✅ <b>Ваш магазин разблокирован</b>\n\n` +
+          `Магазин: ${data.shop_name || data.phone}\n\n` +
+          `Вы снова можете принимать заказы.`
+        );
+      } catch (e) {
+        console.log('[admin.unblockShop] notification failed:', e.message);
+      }
+    }
+    
+    res.json({ ok: true, shop: data });
+  } catch (e) {
+    console.error('[admin.unblockShop] ✗ FATAL', e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// DELETE /api/admin/shops/:id  — soft "ban": set status=rejected (deprecated, use blockShop instead)
 exports.banShop = async (req, res) => {
   try {
     const { id } = req.params;

@@ -17,6 +17,27 @@ function phoneFilter(phone) {
   return `phone.eq.${normalized},phone.ilike.%${normalized}%`;
 }
 
+exports.listAll = async (req, res) => {
+  try {
+    const db = getClient();
+    const { data, error } = await db
+      .from('shops')
+      .select('phone, shop_name, city, photo_url, description, status, verified, rating, rating_count, cover_url')
+      .eq('status', 'active')
+      .order('shop_name', { ascending: true });
+
+    if (error) throw error;
+    
+    res.json({
+      ok: true,
+      data: Array.isArray(data) ? data : []
+    });
+  } catch (err) {
+    console.error('List all shops error:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getByPhone = async (req, res) => {
   try {
     const phone = normalizePhone(req.query.phone);
@@ -127,6 +148,10 @@ exports.login = async (req, res) => {
     if (shop.status === 'rejected') {
       return res.status(403).json({ error: 'Аккаунт отклонён. Свяжитесь с администратором.' });
     }
+    console.log('[shops.login] shop.is_blocked:', shop.is_blocked);
+    if (shop.is_blocked) {
+      return res.status(403).json({ error: 'Ваш магазин заблокирован. Для разблокировки обратитесь к @rebuket_admin' });
+    }
 
     const valid = await bcrypt.compare(password, shop.password_hash);
     if (!valid) {
@@ -197,7 +222,7 @@ exports.me = async (req, res) => {
     const phone = normalizePhone(req.shop?.phone);
     const { data: shop, error } = await getClient()
       .from('shops')
-      .select('id,shop_name,city,telegram,phone,status,photo_url,description,delivery_info,categories,verified,rating,rating_count,cover_url')
+      .select('id,shop_name,city,telegram,phone,status,photo_url,description,delivery_info,categories,verified,rating,rating_count,cover_url,is_blocked')
       .or(phoneFilter(phone))
       .single();
 
@@ -220,6 +245,7 @@ exports.me = async (req, res) => {
       verified:      !!shop.verified,
       rating:        shop.rating ?? null,
       rating_count:  shop.rating_count ?? 0,
+      is_blocked:    !!shop.is_blocked,
     });
   } catch (e) {
     console.error('shops.me error:', e.message);

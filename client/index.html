@@ -256,6 +256,115 @@ nav {
 .shop-cnt { background: rgba(33,150,243,.10); color: #1565c0; }
 
 /* ============================================================
+   SHOPS GRID
+   ============================================================ */
+.shops-grid {
+  display: grid;
+  grid-template-columns: repeat( auto-fit, minmax(260px, 1fr) );
+  gap: 20px;
+  align-items: stretch;
+}
+.shop-card {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid rgba(34,160,91,.12);
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 18px 45px rgba(15,17,23,.08);
+  transition: transform .28s ease, box-shadow .28s ease, border-color .28s ease;
+  cursor: pointer;
+}
+.shop-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 28px 60px rgba(15,17,23,.12);
+  border-color: rgba(34,160,91,.22);
+}
+.shop-card-cover {
+  position: relative;
+  min-height: 170px;
+  background: linear-gradient(135deg, rgba(34,160,91,.12), rgba(255,255,255,0));
+}
+.shop-card-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+.shop-card-avatar {
+  position: absolute;
+  left: 18px;
+  bottom: -24px;
+  width: 66px;
+  height: 66px;
+  border-radius: 22px;
+  background: #fff;
+  border: 3px solid #fff;
+  box-shadow: 0 18px 34px rgba(15,17,23,.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.shop-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shop-card-body {
+  padding: 42px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 220px;
+}
+.shop-card-name {
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--black);
+}
+.shop-card-city {
+  font-size: .88rem;
+  color: var(--mid);
+}
+.shop-card-desc {
+  font-size: .9rem;
+  color: var(--gray);
+  line-height: 1.6;
+  min-height: 3.2rem;
+}
+.shop-card-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.shop-card-rating,
+.shop-card-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: .82rem;
+  font-weight: 700;
+}
+.shop-card-rating {
+  color: #276749;
+  background: rgba(72,187,120,.12);
+}
+.shop-card-verified {
+  color: #15588a;
+  background: rgba(33,150,243,.08);
+  border: 1px solid rgba(33,150,243,.16);
+}
+.shop-card-status { display: inline-flex; padding: 6px 12px; border-radius: 999px; font-size: .78rem; font-weight: 700; color: #15588a; background: rgba(33,150,243,.08); border: 1px solid rgba(33,150,243,.14); }
+
+/* ============================================================
    CATALOG
    ============================================================ */
 .back {
@@ -847,7 +956,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     <ul class="nav-links">
       <li><a onclick="goPage('home')">Главная</a></li>
       <li><a onclick="goPage('catalog')">Каталог</a></li>
-      <li><a onclick="setModeAndGo('shop')">🏪 Магазины</a></li>
+      <li><a onclick="openShopsPage()">🏪 Магазины</a></li>
       <li><a onclick="goPage('sell')">+ Разместить</a></li>
       <li><a class="nav-admin" onclick="goPage('admin')">⚙ Панель</a></li>
     </ul>
@@ -871,7 +980,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
   <div class="nav-drawer" id="nav-drawer">
     <a onclick="goPage('home');closeDrawer()">🏠 Главная</a>
     <a onclick="goPage('catalog');closeDrawer()">🛍 Каталог</a>
-    <a onclick="setModeAndGo('shop');closeDrawer()">🏪 Магазины</a>
+    <a onclick="openShopsPage();closeDrawer()">🏪 Магазины</a>
     <a onclick="goPage('sell');closeDrawer()">➕ Разместить объявление</a>
     <a class="nav-admin" onclick="goPage('admin');closeDrawer()">⚙ Панель администратора</a>
     <a class="drawer-shop" onclick="onShopBtnClick();closeDrawer()">🏪 <span id="drawer-shop-label">Войти как магазин</span></a>
@@ -973,6 +1082,18 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     </div>
     <div class="pgrid" id="pgrid"><div class="loader">🌿 Загружаем…</div></div>
     <div id="pgn" class="pgn"></div>
+  </div>
+</div>
+
+<!-- ALL SHOPS PAGE -->
+<div id="page-shops" class="page">
+  <div class="section">
+    <button class="back" onclick="goPage('home')">← Назад</button>
+    <h2 class="section-title" style="margin-bottom:12px">🏪 Все магазины</h2>
+    <p class="section-sub" style="margin-bottom:20px">Выберите магазин и посмотрите их товары</p>
+    <div id="shops-grid" class="shops-grid">
+      <div class="loader">🌿 Загружаем магазины…</div>
+    </div>
   </div>
 </div>
 
@@ -2059,7 +2180,7 @@ updateShopUI();
 <script type="module">
 import { api, isAuth, setTok, clrTok } from './js/api.js';
 import { goPage, toast, closeModal, openModal } from './js/utils.js';
-import { loadCatalog, loadCounts, loadCities, filterAndGo, handleRoute, loadConfig, setCatalogMode, loadMyShopProducts, refreshShopProfileUI, openShopProfile, loadShopProfilePage, logoutShopFromProfile, viewShopProfile } from './js/main.js';
+import { loadCatalog, loadCounts, loadCities, filterAndGo, handleRoute, loadConfig, setCatalogMode, loadMyShopProducts, refreshShopProfileUI, openShopProfile, loadShopProfilePage, logoutShopFromProfile, viewShopProfile, loadAllShops } from './js/main.js';
 import { checkAdminAuth } from './js/admin.js';
 window.loadCatalog = loadCatalog;
 window.setCatalogMode = setCatalogMode;
@@ -2069,6 +2190,7 @@ window.openShopProfile = openShopProfile;
 window.loadShopProfilePage = loadShopProfilePage;
 window.logoutShopFromProfile = logoutShopFromProfile;
 window.viewShopProfile = viewShopProfile;
+window.openShopsPage = async () => { goPage('shops'); await loadAllShops(); };
 
 /* ══════════════════════════════════════
    КОРЗИНА

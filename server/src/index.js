@@ -92,6 +92,7 @@ router.patch('/shops/admin/orders/:id/status', shopAuth, O.shopUpdateOrderStatus
 
 router.post('/shops/register',      S.register);
 router.post('/shops/login',         S.login);
+router.get('/shops/all',            S.listAll);
 router.get('/shops/by-phone',       S.getByPhone);
 router.get('/shops/me',             shopAuth, S.me);
 router.patch('/shops/me',           shopAuth, uploadPhotoOptional, S.updateProfile);
@@ -134,7 +135,9 @@ router.patch('/admin/orders/:id/dispute-resolve',   adminAuth, E.resolveDispute)
 router.get('/admin/shops',                          adminAuth, AS.listShops);
 router.patch('/admin/shops/:id',                    adminAuth, AS.updateShop);
 router.post('/admin/shops/:id/reset-password',      adminAuth, AS.resetShopPassword);
-router.delete('/admin/shops/:id',                   adminAuth, AS.banShop);
+router.delete('/admin/shops/:id',                   adminAuth, AS.deleteShop);
+router.patch('/admin/shops/:id/block',              adminAuth, AS.blockShop);
+router.patch('/admin/shops/:id/unblock',            adminAuth, AS.unblockShop);
 
 // ── App ──────────────────────────────────────────────────
 app.set('trust proxy', 1);

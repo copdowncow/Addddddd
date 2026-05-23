@@ -193,6 +193,78 @@ export async function loadMyShopProducts() {
   await loadCatalog();
 }
 
+export async function loadAllShops() {
+  const gridEl = document.getElementById('shops-grid');
+  if (!gridEl) return;
+
+  gridEl.innerHTML = '<div class="loader">🌿 Загружаем магазины…</div>';
+
+  try {
+    const resp = await fetch('/api/shops/all');
+    const result = await resp.json();
+
+    if (!resp.ok || !result.ok) {
+      console.error('[loadAllShops] bad response:', resp.status, result);
+      gridEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Ошибка загрузки</h3><p>Не удалось загрузить список магазинов. Попробуйте позже.</p></div>';
+      return;
+    }
+
+    const shops = Array.isArray(result.data) ? result.data : [];
+
+    if (shops.length === 0) {
+      gridEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Нет магазинов</h3><p>Пока нет активных магазинов. Зарегистрируйте свой магазин!</p></div>';
+      return;
+    }
+
+    gridEl.innerHTML = shops.map(shop => shopCard(shop)).join('');
+  } catch (err) {
+    console.error('[loadAllShops] error:', err);
+    gridEl.innerHTML = '<div class="empty"><span>🏬</span><h3>Ошибка загрузки</h3><p>Не удалось загрузить список магазинов. Попробуйте позже.</p></div>';
+  }
+}
+
+function shopCard(shop) {
+  const coverHtml = shop.cover_url
+    ? `<img src="${esc(imgUrl(shop.cover_url, 600))}" alt="${esc(shop.shop_name || 'Магазин')}" loading="lazy">`
+    : '';
+
+  const avatarHtml = shop.photo_url
+    ? `<img src="${esc(imgUrl(shop.photo_url, 200))}" alt="${esc(shop.shop_name || 'Магазин')}" loading="lazy">`
+    : getShopAvatar(shop.shop_name || 'Магазин');
+
+  const ratingHtml = shop.rating && shop.rating_count
+    ? `<span class="shop-card-rating">⭐ ${Number(shop.rating).toFixed(1)} (${shop.rating_count})</span>`
+    : '<span class="shop-card-rating">⭐ Новый</span>';
+
+  const verifiedHtml = shop.verified
+    ? `<span class="shop-card-verified">Проверенный</span>`
+    : '';
+
+  const descHtml = shop.description
+    ? `<div class="shop-card-desc">${esc(shop.description)}</div>`
+    : '';
+
+  return `
+    <div class="shop-card" onclick="viewShopProfile('${esc(shop.phone)}')">
+      <div class="shop-card-cover">
+        ${coverHtml}
+        <div class="shop-card-avatar">
+          ${avatarHtml}
+        </div>
+      </div>
+      <div class="shop-card-body">
+        <div class="shop-card-name">${esc(shop.shop_name || 'Магазин')}</div>
+        <div class="shop-card-city">📍 ${esc(shop.city || 'Таджикистан')}</div>
+        ${descHtml}
+        <div class="shop-card-footer">
+          ${ratingHtml}
+          ${verifiedHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 export async function viewShopProfile(phone) {
   if (!phone) return;
   goPage('shop-view');
@@ -344,12 +416,78 @@ async function renderShopProfile() {
     if (resp.shop_name) localStorage.setItem('shop_name', resp.shop_name);
     if (resp.photo_url) localStorage.setItem('shop_photo', resp.photo_url);
     if (typeof resp.description === 'string') localStorage.setItem('shop_description', resp.description);
+
+    // Show blocked page if shop is blocked - hide everything else
+    console.log('[renderShopProfile] is_blocked:', resp.is_blocked);
+    if (resp.is_blocked) {
+      // Hide all profile elements
+      if (avatar) avatar.style.display = 'none';
+      if (nameEl) nameEl.style.display = 'none';
+      if (welcomeEl) welcomeEl.style.display = 'none';
+      if (subEl) subEl.style.display = 'none';
+      if (phoneEl) phoneEl.style.display = 'none';
+      if (countEl) countEl.style.display = 'none';
+      if (descEl) descEl.style.display = 'none';
+      if (listEl) listEl.style.display = 'none';
+
+      // Hide action buttons
+      const actionButtons = document.querySelectorAll('#shop-profile-page .btn, #shop-profile-page button');
+      actionButtons.forEach(btn => btn.style.display = 'none');
+
+      // Show full blocked page
+      const blockedPage = document.getElementById('shop-blocked-full-page');
+      if (!blockedPage) {
+        const page = document.createElement('div');
+        page.id = 'shop-blocked-full-page';
+        page.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:40px 20px;text-align:center';
+        page.innerHTML = `
+          <div style="font-size:5rem;margin-bottom:20px">🚫</div>
+          <h2 style="color:#dc2626;margin:0 0 16px 0;font-size:1.8rem;font-family:'Cormorant Garamond',serif">Ваш магазин заблокирован</h2>
+          <p style="color:#991b1b;margin:0 0 24px 0;font-size:1.1rem;line-height:1.6;max-width:500px">
+            Доступ к функциям магазина ограничен. Для разблокировки обратитесь в поддержку.
+          </p>
+          <a href="https://t.me/rebuket_admin" target="_blank" 
+             style="display:inline-flex;align-items:center;gap:8px;padding:14px 28px;background:#dc2626;color:#fff;text-decoration:none;border-radius:50px;font-weight:700;font-size:1rem;transition:all 0.2s"
+             onmouseover="this.style.background='#b91c1c'" onmouseout="this.style.background='#dc2626'">
+            ✈️ Написать @rebuket_admin
+          </a>
+          <p style="color:#7f1d1d;margin-top:32px;font-size:0.9rem">
+            После разблокировки вы сможете снова управлять публикациями и принимать заказы.
+          </p>
+        `;
+        const profileContainer = document.getElementById('shop-profile-page');
+        if (profileContainer) {
+          profileContainer.insertBefore(page, profileContainer.firstChild);
+        }
+      } else {
+        blockedPage.style.display = 'flex';
+      }
+      return; // Don't load publications
+    } else {
+      // Remove blocked page if shop is not blocked
+      const blockedPage = document.getElementById('shop-blocked-full-page');
+      if (blockedPage) blockedPage.style.display = 'none';
+
+      // Show all profile elements
+      if (avatar) avatar.style.display = '';
+      if (nameEl) nameEl.style.display = '';
+      if (welcomeEl) welcomeEl.style.display = '';
+      if (subEl) subEl.style.display = '';
+      if (phoneEl) phoneEl.style.display = '';
+      if (countEl) countEl.style.display = '';
+      if (descEl) descEl.style.display = '';
+      if (listEl) listEl.style.display = '';
+
+      // Show action buttons
+      const actionButtons = document.querySelectorAll('#shop-profile-page .btn, #shop-profile-page button');
+      actionButtons.forEach(btn => btn.style.display = '');
+    }
   } catch (e) {
     console.log('[renderShopProfile] /shops/me error (non-critical):', e.message);
     if (descEl) { descEl.textContent = ''; descEl.style.display = 'none'; }
   }
 
-  // 2) Load publications
+  // 2) Load publications (only if not blocked)
   try {
     const pubs = await shopFetch('GET', '/shops/products?limit=50');
     const total = Number(pubs.total || 0);
@@ -1540,7 +1678,6 @@ window.submitListing = async () => {
   let phone    = document.getElementById('sell-phone').value.trim();
   const category = document.getElementById('sell-cat-val')?.value;
 
-  // If logged in as shop, use shop phone
   const shop = getShopSession();
   if (shop.phone) {
     phone = shop.phone;
@@ -1574,7 +1711,6 @@ window.submitListing = async () => {
   const isShopUser = !!shop.phone;
   if (!isShopUser) markField('sell-address', !!address);
 
-  // Shops: only title/category/price/photos required (city/address/size auto-filled server-side)
   const requiredOk = isShopUser
     ? (title && price && category)
     : (title && price && city && phone && category && address);
@@ -1616,7 +1752,6 @@ window.submitListing = async () => {
   fd.append('category',        category);
   fd.append('price',           price);
   fd.append('city',            city);
-  // If logged in as shop, use shop name for seller_name
   let sellerName = document.getElementById('sell-name').value.trim();
   if (shop.name) {
     sellerName = shop.name;
@@ -1662,7 +1797,6 @@ window.submitListing = async () => {
   finally { btn.disabled=false; btn.textContent='Разместить объявление'; }
 };
 
-// ── HOME COUNTS ───────────────────────────────────────────
 export async function loadCounts() {
   try {
     const [ecoBouquet, ecoBasket, ecoBear, ecoSweets, shopBouquet, shopBasket, shopBear, shopSweets] = await Promise.all([
@@ -1702,7 +1836,6 @@ export async function refreshShopProfileUI() {
   const nameEl = document.getElementById('shop-profile-name');
   const countEl = document.getElementById('shop-profile-count');
   
-  // Try to get shop photo from localStorage
   const shopPhoto = localStorage.getItem('shop_photo');
   
   if (avatar) {
@@ -1738,16 +1871,16 @@ export async function loadCities(selId) {
   } catch {}
 }
 
-// ── HASH ROUTER ───────────────────────────────────────────
 export async function handleRoute() {
   const hash = location.hash || '#home';
   if (hash.startsWith('#product-')) {
     window.openProduct(hash.replace('#product-',''));
   } else {
     const page = hash.replace('#','') || 'home';
-    const valid = ['home','catalog','sell','admin','product','shop-profile','cart','shop-view','register'];
+    const valid = ['home','catalog','sell','admin','product','shop-profile','cart','shop-view','shops','register'];
     goPage(valid.includes(page) ? page : 'home', false);
     if (page === 'catalog') await loadCatalog();
+    if (page === 'shops') await loadAllShops();
     if (page === 'shop-profile') await openShopProfile();
     if (page === 'sell') updateSellPageLayout();
   }

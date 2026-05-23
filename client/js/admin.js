@@ -889,7 +889,7 @@ window.rejectOrder = async (id) => {
   try {
     const res = await fetch(`/api/admin/orders/${id}/status`, {
       method: 'PATCH',
-      headers: { 
+      headers: {
         'Authorization': 'Bearer ' + getTok(),
         'Content-Type': 'application/json'
       },
@@ -900,4 +900,147 @@ window.rejectOrder = async (id) => {
     toast('❌ Заказ отклонен', 'err');
     renderOrders();
   } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
+};
+
+// ── Магазины ─────────────────────────────────────────────────
+
+let sFilter = '';
+let sSearch = '';
+let _sSearchTimer = null;
+
+window.setSSearch = (val) => {
+  sSearch = val;
+  clearTimeout(_sSearchTimer);
+  _sSearchTimer = setTimeout(renderShops, 400);
+};
+
+window.setSFilter = (s,el) => {
+  sFilter = s;
+  document.querySelectorAll('#s-filter-chips .chip').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderShops();
+};
+
+async function renderShops() {
+  const el = document.getElementById('tab-shops');
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input id="s-search" type="text" placeholder="🔍 Поиск по названию/телефону..." value="${sSearch}"
+        oninput="setSSearch(this.value)"
+        style="flex:1;min-width:180px;padding:8px 12px;border:2px solid #eee;border-radius:10px;font-size:.88rem;outline:none;font-family:'Jost',sans-serif">
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px" id="s-filter-chips">
+      ${[['','Все'],['pending','⏳ На проверке'],['active','✅ Активные'],['rejected','❌ Отклоненные']]
+        .map(([v,l])=>`<button class="chip${sFilter===v?' active':''}" onclick="setSFilter('${v}',this)">${l}</button>`).join('')}
+    </div>
+    <div id="s-table"><div class="loader">Загружаем…</div></div>`;
+
+  try {
+    const q = new URLSearchParams();
+    if (sFilter) q.set('status', sFilter);
+    if (sSearch) q.set('search', sSearch);
+    const r = await fetch('/api/admin/shops?' + q.toString(), {
+      headers: { 'Authorization': 'Bearer ' + getTok() }
+    });
+    const d = await r.json();
+    const t = document.getElementById('s-table');
+    if (!r.ok) {
+      if (r.status === 401) {
+        clrTok();
+        t.innerHTML = '<div class="empty"><span>🔐</span><h3>Сессия истекла</h3><p style="color:var(--gray)">Войдите в админку заново.</p></div>';
+        return;
+      }
+      throw new Error(d.error || 'Ошибка загрузки');
+    }
+    let rows = d.data || [];
+    if (!rows.length) { t.innerHTML='<div class="empty"><span>📭</span><h3>Нет магазинов</h3></div>'; return; }
+
+    const statusMap = { active:'bd-g', pending:'bd-y', rejected:'bd-r' };
+    const statusLabel = { active:'✅ Активен', pending:'⏳ На проверке', rejected:'❌ Отклонен' };
+
+    t.innerHTML = rows.map(s => {
+      const statusDot = `<span class="${statusMap[s.status]||'bd-y'}" style="font-size:.72rem">${statusLabel[s.status]||s.status}</span>`;
+      const blockedBadge = s.is_blocked ? `<span class="bd-r" style="font-size:.72rem">🚫 Заблокирован</span>` : '';
+      const stats = s.stats || {};
+
+      return `<div class="acard" style="${s.is_blocked ? 'border-color:rgba(239,68,68,.4);box-shadow:0 0 0 3px rgba(239,68,68,.08)' : ''}">
+        <div class="acard-top">
+          <div class="acard-info">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              ${statusDot}
+              ${blockedBadge}
+              <span style="font-size:.75rem;color:var(--gray)">${fmtD(s.created_at)}</span>
+            </div>
+            <div class="acard-title">${esc(s.shop_name || s.phone)}</div>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:3px">📞 ${esc(s.phone)}</div>
+            <div style="font-size:.78rem;color:var(--gray)">📍 ${esc(s.city || '—')}</div>
+            ${s.telegram ? `<div style="font-size:.78rem;color:var(--gray)">✈️ ${esc(s.telegram)}</div>` : ''}
+          </div>
+          <div style="text-align:right;min-width:130px">
+            <div style="font-size:.7rem;color:var(--gray);margin-bottom:2px">Товаров</div>
+            <div style="font-size:.9rem;font-weight:700">${stats.products || 0}</div>
+            <div style="font-size:.7rem;color:var(--gray);margin-top:4px">Заказов</div>
+            <div style="font-size:.9rem;font-weight:700">${stats.orders || 0}</div>
+          </div>
+        </div>
+
+        ${s.description ? `<div style="margin-top:10px;padding:10px;background:var(--warm);border-radius:8px;font-size:.82rem;color:var(--mid)">${esc(s.description)}</div>` : ''}
+
+        <div class="acard-actions">
+          ${s.status==='pending' ? `
+            <button class="aact-btn aact-g" onclick="updateShopStatus('${s.id}','active')">✅ Одобрить</button>
+            <button class="aact-btn aact-r" onclick="updateShopStatus('${s.id}','rejected')">❌ Отклонить</button>
+          ` : ''}
+          <button class="aact-btn aact-r" onclick="toggleShopBlock('${s.id}',true)">� Заблокировать</button>
+          <button class="aact-btn aact-g" onclick="toggleShopBlock('${s.id}',false)">� Разблокировать</button>
+          <button class="aact-btn aact-b" onclick="deleteShop('${s.id}')">🗑 Удалить</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { document.getElementById('s-table').innerHTML=`<div class="empty"><h3>${e.message}</h3></div>`; }
+}
+
+window.updateShopStatus = async (id, status) => {
+  try {
+    const res = await fetch('/api/admin/shops/' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Authorization': 'Bearer ' + getTok(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Ошибка');
+    toast('Статус обновлен', 'ok');
+    renderShops();
+  } catch(e) { toast(e.message, 'err'); }
+};
+
+window.toggleShopBlock = async (id, block) => {
+  const action = block ? 'заблокировать' : 'разблокировать';
+  if (!confirm(`Вы уверены, что хотите ${action} этот магазин?`)) return;
+  try {
+    const endpoint = block ? '/api/admin/shops/' + encodeURIComponent(id) + '/block' : '/api/admin/shops/' + encodeURIComponent(id) + '/unblock';
+    const res = await fetch(endpoint, {
+      method: 'PATCH',
+      headers: { 'Authorization': 'Bearer ' + getTok() },
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Ошибка');
+    toast(block ? 'Магазин заблокирован' : 'Магазин разблокирован', 'ok');
+    renderShops();
+  } catch(e) { toast(e.message, 'err'); }
+};
+
+window.deleteShop = async (id) => {
+  if (!confirm('Вы уверены, что хотите удалить этот магазин? Все товары магазина также будут удалены. Это действие нельзя отменить.')) return;
+  try {
+    const res = await fetch('/api/admin/shops/' + encodeURIComponent(id), {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + getTok() },
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Ошибка');
+    toast('Магазин удален', 'ok');
+    renderShops();
+    loadDashStats();
+  } catch(e) { toast(e.message, 'err'); }
 };
