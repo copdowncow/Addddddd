@@ -54,7 +54,11 @@ function getTelegramAdminHandle() {
 
 function buildTelegramAdminUrl(message) {
   const handle = getTelegramAdminHandle() || 'rebuket_admin';
-  return 'https://t.me/' + handle + '?text=' + encodeURIComponent(message || '');
+  const encoded = 'text=' + encodeURIComponent(message || '');
+  if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) {
+    return `tg://resolve?domain=${handle}&${encoded}`;
+  }
+  return `https://t.me/${handle}?${encoded}`;
 }
 
 function ecoTelegramBuyMessage(p) {
