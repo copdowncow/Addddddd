@@ -403,8 +403,8 @@ window.setShopProductStatus = async function(id, action) {
   const labels = { show: 'показать', hide: 'скрыть', delist: 'снять с продажи' };
   if (!confirm('Вы уверены, что хотите ' + (labels[action] || action) + ' эту публикацию?')) return;
   try {
-    await shopFetch('PATCH', '/shops/products/' + encodeURIComponent(id) + '/status', { action });
-    toast('Готово', 'ok');
+    const r = await shopFetch('PATCH', '/shops/products/' + encodeURIComponent(id) + '/status', { action });
+    toast(r.needs_migration ? 'Снято с продажи (выполните миграцию 008 в Supabase для статуса sold_out)' : 'Готово', 'ok');
     _editPubCache = {};
     await renderShopProfile();
   } catch (err) {
@@ -911,14 +911,24 @@ window._syncDots = (uid) => {
 };
 
 window._pCardAddToCart = (uid, pAttr) => {
+  const btn = document.getElementById(uid + '-cartbtn');
+  if (btn?.disabled || btn?.classList.contains('added')) return;
+
   const p = JSON.parse(decodeURIComponent(pAttr));
-  // Block eco products
   if (!isShopListing(p)) {
-    if (typeof toast === 'function') toast('', 'info');
+    if (typeof toast === 'function') toast('🌿 Эко заказывается через Telegram', 'info');
     return;
   }
+
+  const itemId = String(p.id || p.slug || '').trim();
+  if (window._cart?.some(i => String(i.id || i.slug || '') === itemId)) {
+    if (typeof toast === 'function') toast('Уже в корзине — измените количество кнопками + и −', 'info');
+    return;
+  }
+
   const img = Array.isArray(p.photos) && p.photos[0] ? imgUrl(p.photos[0], 200) : null;
   window.addToCart({
+    id: itemId,
     title: p.title,
     price: priceWithCommission(p),
     city: p.city,
@@ -926,16 +936,16 @@ window._pCardAddToCart = (uid, pAttr) => {
     img: img,
     emoji: CAT_EM[p.category],
     slug: p.slug || p.id,
-    is_shop_listing: isShopListing(p),
+    is_shop_listing: true,
     seller_phone: p.seller_phone,
     stock_quantity: p.stock_quantity || 999999,
     seller_name: p.seller_name || p.shop_name,
     seller_photo: p.photo_url || p.seller_photo,
   });
-  const btn = document.getElementById(uid + '-cartbtn');
   if (btn) {
     btn.textContent = '✅ В корзине';
     btn.classList.add('added');
+    btn.disabled = true;
   }
 };
 
@@ -1063,35 +1073,39 @@ function renderDetail(p, el) {
 
 window._pdDetailAddToCart = (btn) => {
   const p = window._detailProduct;
-  if (!p) return;
-  // Block eco products from being added to cart
+  if (!p || btn?.disabled || btn?.classList.contains('added')) return;
   if (!isShopListing(p)) {
     if (typeof toast === 'function') toast('🌿 Эко заказывается через Telegram', 'info');
+    return;
+  }
+  const itemId = String(p.id || p.pub_id || p.slug || '').trim();
+  if (window._cart?.some(i => String(i.id || i.slug || '') === itemId)) {
+    if (typeof toast === 'function') toast('Уже в корзине — измените количество кнопками + и −', 'info');
     return;
   }
   const price  = window._detailPrice || priceWithCommission(p);
   const photos = Array.isArray(p.photos) ? p.photos : [];
   const emoji  = CAT_EM[p.category] || '🌸';
   if (window.addToCart) {
-    window.addToCart({ 
-      id: p.id || p.pub_id, 
-      title: p.title, 
-      price, 
-      city: p.city, 
-      size: p.size, 
-      img: photos[0] || null, 
+    window.addToCart({
+      id: itemId,
+      title: p.title,
+      price,
+      city: p.city,
+      size: p.size,
+      img: photos[0] || null,
       emoji,
       is_shop_listing: true,
       seller_phone: p.seller_phone,
+      stock_quantity: p.stock_quantity || 999999,
       seller_name: p.seller_name || p.shop_name,
       seller_photo: p.photo_url || p.seller_photo,
     });
   }
   if (btn) {
-    const orig = btn.innerHTML;
-    btn.innerHTML = '<span style="font-size:1.2rem">✓</span> Добавлено в корзину!';
-    btn.classList.add('added'); btn.disabled = true;
-    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('added'); btn.disabled = false; }, 2000);
+    btn.innerHTML = '<span style="font-size:1.2rem">✓</span> В корзине';
+    btn.classList.add('added');
+    btn.disabled = true;
   }
 };
 

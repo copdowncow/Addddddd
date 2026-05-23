@@ -474,15 +474,32 @@ exports.setProductStatus = async (req, res) => {
       return res.status(400).json({ error: 'Публикация ещё на проверке' });
     }
 
-    const { data, error } = await getClient()
+    let statusToSet = newStatus;
+    let { data, error } = await getClient()
       .from('products')
-      .update({ status: newStatus })
+      .update({ status: statusToSet })
       .eq('id', id)
       .select()
       .single();
 
+    // БД без sold_out в CHECK (миграция 008 не выполнена) — снимаем как hidden
+    if (error && action === 'delist' && /products_status_check/i.test(error.message || '')) {
+      statusToSet = 'hidden';
+      ({ data, error } = await getClient()
+        .from('products')
+        .update({ status: statusToSet })
+        .eq('id', id)
+        .select()
+        .single());
+    }
+
     if (error) throw error;
-    res.json({ ok: true, data });
+    res.json({
+      ok: true,
+      data,
+      status_applied: statusToSet,
+      needs_migration: action === 'delist' && statusToSet === 'hidden' && newStatus === 'sold_out',
+    });
   } catch (e) {
     console.error('shops.setProductStatus error:', e.message);
     res.status(500).json({ error: e.message });

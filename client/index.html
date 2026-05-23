@@ -1470,7 +1470,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     <p style="color:var(--gray);font-size:.83rem;text-align:center;margin-bottom:18px">Заполните данные для доставки</p>
     
     <!-- Step 1: Customer Info -->
-    <div id="checkout-step-1">
+    <div id="checkout-step-1" class="checkout-step checkout-step-active">
       <div class="checkout-intro">
         <div class="checkout-intro-icon">👤</div>
         <div>
@@ -1544,7 +1544,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     </div>
     
     <!-- Step 2: Delivery Selection -->
-    <div id="checkout-step-2" style="display:none">
+    <div id="checkout-step-2" class="checkout-step">
       <p style="font-weight:700;margin-bottom:16px;color:var(--mid)">Выберите способ доставки</p>
       
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
@@ -1601,7 +1601,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
     </div>
     
     <!-- Step 3: Payment Info -->
-    <div id="checkout-step-3" style="display:none">
+    <div id="checkout-step-3" class="checkout-step">
       <div style="background:linear-gradient(135deg,#0f1117 0%,#1e2330 100%);border-radius:16px;padding:24px;margin-bottom:20px;color:#fff">
         <div style="font-size:2.4rem;margin-bottom:12px;text-align:center">💳</div>
         <h4 style="text-align:center;margin-bottom:8px;font-size:1.2rem">Оплата заказа</h4>
@@ -2137,34 +2137,26 @@ window.changeCartItemQty = (idx, delta) => {
   saveCart();
 };
 window.addToCart = (item) => {
-  // Block eco products - cart is for shop products only
   if (!item || item.is_shop_listing !== true) {
     toast('🌿 Эко заказывается через Telegram', 'info');
     return;
   }
-  // Check if item already exists in cart
-  const existingIdx = window._cart.findIndex(i => i.id === item.id);
-  if (existingIdx >= 0) {
-    const currentQty = window._cart[existingIdx].qty || 1;
-    const newQty = currentQty + 1;
-    
-    // Validate against stock quantity if available
-    if (item.stock_quantity && item.stock_quantity < 999999 && newQty > item.stock_quantity) {
-      toast(`Нет такого количества в наличии. Максимум: ${item.stock_quantity}`, 'err');
-      return;
-    }
-    
-    window._cart[existingIdx].qty = newQty;
-    saveCart();
-    toast('🛒 Количество обновлено', 'success');
-  } else {
-    item.qty = 1;
-    window._cart.push(item);
-    saveCart();
-    toast('🛒 Добавлено в корзину', 'success');
+  const itemId = String(item.id || item.slug || '').trim();
+  if (!itemId) {
+    toast('Не удалось добавить товар', 'err');
+    return;
   }
-  
-  // Update delivery time label if checkout modal is open
+  const existingIdx = window._cart.findIndex(i => String(i.id || i.slug || '') === itemId);
+  if (existingIdx >= 0) {
+    toast('Уже в корзине — измените количество кнопками + и −', 'info');
+    window.openCart?.();
+    return;
+  }
+  item.id = itemId;
+  item.qty = 1;
+  window._cart.push(item);
+  saveCart();
+  toast('🛒 Добавлено в корзину', 'success');
   updateDeliveryTimeLabel();
 };
 window.clearCart = () => { 
@@ -2186,11 +2178,50 @@ window.closeCart = () => {
   document.getElementById('cart-overlay').classList.remove('open');
   document.getElementById('cart-drawer').classList.remove('open');
 };
+window.setCheckoutStep = (step) => {
+  [1, 2, 3].forEach(n => {
+    const el = document.getElementById('checkout-step-' + n);
+    if (!el) return;
+    const active = n === step;
+    el.classList.toggle('checkout-step-active', active);
+    el.setAttribute('aria-hidden', active ? 'false' : 'true');
+    el.querySelectorAll('input, select, textarea, button').forEach(ctrl => {
+      if (ctrl.classList.contains('modal-x')) return;
+      if (!active) {
+        if (!ctrl.dataset.wasDisabled) ctrl.dataset.wasDisabled = ctrl.disabled ? '1' : '0';
+        ctrl.disabled = true;
+        ctrl.tabIndex = -1;
+      } else if (ctrl.dataset.wasDisabled !== '1') {
+        ctrl.disabled = false;
+        ctrl.tabIndex = 0;
+      }
+    });
+  });
+  const modal = document.querySelector('#checkout-modal .modal');
+  if (modal) modal.scrollTop = 0;
+};
+
+window.saveCheckoutStep1 = () => {
+  const anotherPerson = document.getElementById('checkout-another-person').checked;
+  window._checkoutForm = {
+    name: document.getElementById('checkout-name').value.trim(),
+    phone: document.getElementById('checkout-phone').value.trim(),
+    telegram: document.getElementById('checkout-telegram')?.value?.trim() || '',
+    anotherPerson,
+    address: anotherPerson ? '' : document.getElementById('checkout-address').value.trim(),
+    receiverName: anotherPerson ? document.getElementById('checkout-receiver-name').value.trim() : '',
+    receiverPhone: anotherPerson ? document.getElementById('checkout-receiver-phone').value.trim() : '',
+    receiverAddress: anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : '',
+    fastOrder: document.getElementById('checkout-fast-order').checked,
+    deliveryTime: document.getElementById('checkout-delivery-time').value.trim(),
+  };
+  return window._checkoutForm;
+};
+
 window.cartCheckout = () => {
   if (window._cart.length === 0) return;
-  // Close cart drawer first
   window.closeCart();
-  // Then open checkout modal
+  window._checkoutBusy = false;
   document.getElementById('checkout-modal').classList.add('open');
   resetCheckoutForm();
   prefillCheckoutForm();
@@ -2251,45 +2282,32 @@ window.toggleAnotherPerson = () => {
 };
 
 window.goToCheckoutStep2 = () => {
-  const name = document.getElementById('checkout-name').value.trim();
-  const phone = document.getElementById('checkout-phone').value.trim();
-  const anotherPerson = document.getElementById('checkout-another-person').checked;
-  const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
-  const receiverAddress = anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : null;
   const msgEl = document.getElementById('checkout-msg');
-  
-  if (!name || !phone) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните имя и телефон';
+  const data = window.saveCheckoutStep1();
+
+  if (!data.name || !data.phone) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните имя и телефон'; }
     return;
   }
-  
-  if (!anotherPerson && !address) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните адрес';
+  if (!data.anotherPerson && !data.address) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните адрес'; }
     return;
   }
-  
-  if (anotherPerson && !receiverAddress) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните адрес получателя';
+  if (data.anotherPerson && (!data.receiverName || !data.receiverPhone || !data.receiverAddress)) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните данные получателя'; }
     return;
   }
-  
-  msgEl.textContent = '';
-  document.getElementById('checkout-step-1').style.display = 'none';
-  document.getElementById('checkout-step-3').style.display = 'none';
-  document.getElementById('checkout-step-2').style.display = 'block';
+
+  if (msgEl) msgEl.textContent = '';
+  window.checkoutDelivery = null;
+  window.checkoutDeliveryPayer = null;
+  setCheckoutStep(2);
 };
 
 window.goToCheckoutStep1 = () => {
-  window.clearCheckoutReceipt();
-  document.getElementById('checkout-step-2').style.display = 'none';
-  document.getElementById('checkout-step-3').style.display = 'none';
-  document.getElementById('checkout-step-1').style.display = 'block';
-  // Clear any error messages
   const msgEl = document.getElementById('checkout-msg');
   if (msgEl) msgEl.textContent = '';
+  setCheckoutStep(1);
 };
 
 window.selectDelivery = (type) => {
@@ -2397,12 +2415,7 @@ window.goToCheckoutStep3 = async () => {
     if (dcHolderEl && cfg.payment_holder) dcHolderEl.textContent = cfg.payment_holder;
   } catch (_) {}
   
-  document.getElementById('checkout-step-2').style.display = 'none';
-  document.getElementById('checkout-step-3').style.display = 'block';
-  
-  // Scroll to top of modal
-  const modal = document.getElementById('checkout-modal');
-  if (modal) modal.scrollTop = 0;
+  setCheckoutStep(3);
 };
 
 window.clearCheckoutReceipt = () => {
@@ -2446,10 +2459,11 @@ window.resetCheckoutForm = () => {
   document.getElementById('checkout-receiver-address').value = '';
   document.getElementById('checkout-fast-order').checked = false;
   document.getElementById('checkout-delivery-time').value = '';
-  document.getElementById('checkout-step-1').style.display = 'block';
-  document.getElementById('checkout-step-2').style.display = 'none';
-  document.getElementById('checkout-step-3').style.display = 'none';
-  document.getElementById('checkout-msg').textContent = '';
+  window._checkoutForm = null;
+  window._checkoutBusy = false;
+  setCheckoutStep(1);
+  const msgEl0 = document.getElementById('checkout-msg');
+  if (msgEl0) msgEl0.textContent = '';
   window.clearCheckoutReceipt();
   window.checkoutDelivery = null;
   window.checkoutDeliveryPayer = null;
@@ -2497,42 +2511,48 @@ window.previewReceipt = (event) => {
 };
 
 window.completeCheckout = async () => {
-  const name = document.getElementById('checkout-name').value.trim();
-  const phone = document.getElementById('checkout-phone').value.trim();
-  const anotherPerson = document.getElementById('checkout-another-person').checked;
-  const address = anotherPerson ? null : document.getElementById('checkout-address').value.trim();
-  const receiverName = anotherPerson ? document.getElementById('checkout-receiver-name').value.trim() : null;
-  const receiverPhone = anotherPerson ? document.getElementById('checkout-receiver-phone').value.trim() : null;
-  const receiverAddress = anotherPerson ? document.getElementById('checkout-receiver-address').value.trim() : null;
-  const fastOrder = document.getElementById('checkout-fast-order').checked;
-  const deliveryTime = document.getElementById('checkout-delivery-time').value.trim();
+  if (window._checkoutBusy) return;
+
+  const msgEl = document.getElementById('checkout-msg');
+  const data = window._checkoutForm || window.saveCheckoutStep1();
   const delivery = window.checkoutDelivery;
   const receiptFile = window.checkoutReceiptFile;
-  const msgEl = document.getElementById('checkout-msg');
-  
-  if (!name || !delivery) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = !name ? 'Введите имя покупателя' : 'Выберите способ доставки';
+
+  if (!data.name || !data.phone) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните имя и телефон'; }
+    setCheckoutStep(1);
     return;
   }
-  
-  if (!anotherPerson && !address) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните адрес';
+  if (!data.anotherPerson && !data.address) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните адрес'; }
+    setCheckoutStep(1);
     return;
   }
-  
-  if (anotherPerson && (!receiverName || !receiverPhone || !receiverAddress)) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Заполните данные получателя';
+  if (data.anotherPerson && (!data.receiverName || !data.receiverPhone || !data.receiverAddress)) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Заполните данные получателя'; }
+    setCheckoutStep(1);
     return;
   }
-  
+  if (!delivery) {
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Выберите способ доставки'; }
+    setCheckoutStep(2);
+    return;
+  }
   if (!receiptFile) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = 'Загрузите чек оплаты';
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = 'Загрузите чек оплаты'; }
+    setCheckoutStep(3);
     return;
   }
+
+  const name = data.name;
+  const phone = data.phone;
+  const anotherPerson = data.anotherPerson;
+  const address = anotherPerson ? data.receiverAddress : data.address;
+  const receiverName = anotherPerson ? data.receiverName : null;
+  const receiverPhone = anotherPerson ? data.receiverPhone : null;
+  const receiverAddress = anotherPerson ? data.receiverAddress : null;
+  const fastOrder = data.fastOrder;
+  const deliveryTime = data.deliveryTime;
   
   const subtotal = window._cart.reduce((s, i) => s + (Number(i.price) || 0) * (i.qty || 1), 0);
   const deliveryFee = Number(window.checkoutDeliveryFee) || 0;
@@ -2570,10 +2590,10 @@ window.completeCheckout = async () => {
   }
   
   const btn = document.querySelector('#checkout-step-3 .btn-primary');
+  window._checkoutBusy = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Отправляем…'; }
-  msgEl.style.color = 'var(--gray)';
-  msgEl.textContent = '';
-  
+  if (msgEl) { msgEl.style.color = 'var(--gray)'; msgEl.textContent = ''; }
+
   try {
     const response = await fetch('/api/orders', {
       method: 'POST',
@@ -2609,9 +2629,9 @@ window.completeCheckout = async () => {
     window.clearCart();
     toast('✅ Заказ отправлен! Ожидайте подтверждения.', 'success');
   } catch (error) {
-    msgEl.style.color = 'var(--red)';
-    msgEl.textContent = error.message || 'Ошибка отправки заказа';
+    if (msgEl) { msgEl.style.color = 'var(--red)'; msgEl.textContent = error.message || 'Ошибка отправки заказа'; }
   } finally {
+    window._checkoutBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Отправить заказ'; }
   }
 };
@@ -2716,11 +2736,30 @@ window.renderProductCard = (p) => {
 };
 
 window.cardAddToCart = (p, btn) => {
+  if (btn?.disabled) return;
+  const itemId = String(p.id || p.pub_id || p.slug || '').trim();
+  if (window._cart.some(i => String(i.id || i.slug || '') === itemId)) {
+    toast('Уже в корзине — измените количество кнопками + и −', 'info');
+    return;
+  }
   const emoji = catEmoji(p.category || '');
-  window.addToCart({ id: p.id || p.pub_id, title: p.title, price: p.buyer_price || p.price || 0, city: p.city, size: p.size, img: (p.photos || [])[0] || null, emoji, stock_quantity: p.stock_quantity || 999999 });
-  const orig = btn.innerHTML;
-  btn.innerHTML = '✓ Добавлено в корзину'; btn.classList.add('added'); btn.disabled = true;
-  setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('added'); btn.disabled = false; }, 1800);
+  window.addToCart({
+    id: itemId,
+    title: p.title,
+    price: p.buyer_price || p.price || 0,
+    city: p.city,
+    size: p.size,
+    img: (p.photos || [])[0] || null,
+    emoji,
+    is_shop_listing: (p.listing_type || '') === 'shop',
+    stock_quantity: p.stock_quantity || 999999,
+  });
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ В корзине';
+    btn.classList.add('added');
+    btn.disabled = true;
+  }
 };
 window.quickAddToCart = window.cardAddToCart;
 
@@ -2772,11 +2811,27 @@ window.renderProductDetail = (p) => {
 
   window._currentPd  = p;
   window.pdAddToCart = (btn) => {
-    window.addToCart({ id: p.id || p.pub_id, title: p.title, price, city: p.city, size: p.size, img: imgs[0] || null, emoji, stock_quantity: p.stock_quantity || 999999 });
+    if (btn?.disabled) return;
+    const itemId = String(p.id || p.pub_id || p.slug || '').trim();
+    if (window._cart.some(i => String(i.id || i.slug || '') === itemId)) {
+      toast('Уже в корзине — измените количество кнопками + и −', 'info');
+      return;
+    }
+    window.addToCart({
+      id: itemId,
+      title: p.title,
+      price,
+      city: p.city,
+      size: p.size,
+      img: imgs[0] || null,
+      emoji,
+      is_shop_listing: !isEco,
+      stock_quantity: p.stock_quantity || 999999,
+    });
     if (btn) {
-      const orig = btn.innerHTML;
-      btn.innerHTML = '✓ Добавлено!'; btn.classList.add('added'); btn.disabled = true;
-      setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('added'); btn.disabled = false; }, 2000);
+      btn.innerHTML = '<span style="font-size:1.2rem">✓</span> В корзине';
+      btn.classList.add('added');
+      btn.disabled = true;
     }
   };
   return `<div class="pd-wrap">${galleryHtml}${infoHtml}</div>`;

@@ -173,6 +173,27 @@
   font-size: .95rem;
 }
 
+/* Checkout steps — only one visible (fixes mobile overlap / ghost fields) */
+.checkout-step {
+  display: none !important;
+}
+.checkout-step.checkout-step-active {
+  display: block !important;
+}
+#checkout-modal .modal {
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+#checkout-modal .photo-area {
+  position: relative;
+  z-index: 1;
+}
+#checkout-msg {
+  position: relative;
+  z-index: 2;
+  min-height: 20px;
+}
+
 /* Checkout form polish */
 .checkout-intro {
   display: flex;
