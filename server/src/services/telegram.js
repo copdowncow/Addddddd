@@ -341,7 +341,7 @@ async function notifyAdminCustomerUnreachable(order, result) {
 
 async function sendCustomerPaymentNotification(order) {
   if (!order?.id) return { ok: false, reason: 'no_order' };
-  if (!shouldSendNotification(order.id, 'customer_payment_confirmed')) {
+  if (!canSendNotification(order.id, 'customer_payment_confirmed')) {
     return { ok: true, skipped: true };
   }
 
@@ -356,7 +356,10 @@ async function sendCustomerPaymentNotification(order) {
     `<i>Мы сообщим о каждом изменении статуса заказа в Telegram.</i>`;
 
   const result = await trySendToCustomer(chatId, text);
-  if (result.ok) console.log('[sendCustomerPaymentNotification] Sent to:', chatId);
+  if (result.ok) {
+    markNotificationSent(order.id, 'customer_payment_confirmed');
+    console.log('[sendCustomerPaymentNotification] Sent to:', chatId);
+  }
   return result;
 }
 
@@ -378,20 +381,31 @@ function ensureUserBot() {
 
 function ensureShopBot() {
   if (shopBot) return true;
-  const token = process.env.BOT_TOKEN_SHOP;
-  if (!token) return false;
-  try {
-    shopBot = new TG(token, { polling: false });
-    console.log('[ensureShopBot] shopBot lazily initialized (send only)');
-    return true;
-  } catch (e) {
-    console.error('[ensureShopBot] failed:', e.message);
-    return false;
-  }
+  initShopBot();
+  return !!shopBot;
 }
 
 function phoneDigits(phone) {
-  return (phone || '').toString().replace(/\D/g, '');
+  let d = (phone || '').toString().replace(/\D/g, '');
+  if (!d) return '';
+  // KG: 0555123456 / 555123456 → 996555123456
+  if (d.length === 9 && !d.startsWith('996')) d = '996' + d;
+  if (d.length === 10 && d.startsWith('0')) d = '996' + d.slice(1);
+  // Сравниваем по последним 9 цифрам (номер без кода страны)
+  if (d.length > 9) d = d.slice(-9);
+  return d;
+}
+
+function phoneVariants(phone) {
+  const raw = (phone || '').toString().trim();
+  const d = (phone || '').toString().replace(/\D/g, '');
+  const set = new Set([raw, d, phoneDigits(phone)].filter(Boolean));
+  if (d) {
+    set.add('+' + d);
+    if (!d.startsWith('996') && d.length >= 9) set.add('+996' + d.slice(-9));
+    if (d.startsWith('996')) set.add('+' + d);
+  }
+  return [...set];
 }
 
 function getShopBotUsername() {
@@ -399,7 +413,11 @@ function getShopBotUsername() {
 }
 
 async function findShopsBySellerPhones(sellerPhones) {
-  const wanted = new Set(sellerPhones.map(phoneDigits).filter(Boolean));
+  const wanted = new Set();
+  for (const p of sellerPhones) {
+    for (const v of phoneVariants(p)) wanted.add(phoneDigits(v));
+    wanted.delete('');
+  }
   if (!wanted.size) return [];
 
   const { createSupabaseClient } = require('../db/supabase');
@@ -409,7 +427,12 @@ async function findShopsBySellerPhones(sellerPhones) {
     .select('phone, shop_name, telegram_chat_id, status')
     .eq('status', 'active');
 
-  return (shops || []).filter(s => wanted.has(phoneDigits(s.phone)));
+  const matched = (shops || []).filter(s => wanted.has(phoneDigits(s.phone)));
+  if (!matched.length) {
+    console.log('[findShopsBySellerPhones] no match for:', sellerPhones.join(', '),
+      'wanted digits:', [...wanted].join(', '));
+  }
+  return matched;
 }
 
 async function notifyAdminShopsNotLinked(order, { noBot = [], noChatId = [] }) {
@@ -452,10 +475,7 @@ async function notifyAdminAboutOrder(order) {
   if (!adminBot) { console.error('[notifyAdminAboutOrder] adminBot not initialized'); return; }
   if (adminChatIds.size === 0) { console.error('[notifyAdminAboutOrder] No admin chat IDs'); return; }
 
-  // Deduplication check
-  if (!shouldSendNotification(order.id, 'admin_new_order')) {
-    return;
-  }
+  if (!canSendNotification(order.id, 'admin_new_order')) return;
 
   let items = [];
   if (Array.isArray(order.items)) items = order.items;
@@ -498,6 +518,7 @@ async function notifyAdminAboutOrder(order) {
 
   const options = { parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: actionsKeyboard };
 
+  let adminSent = 0;
   for (const chatId of adminChatIds) {
     try {
       if (order.receipt_url) {
@@ -505,11 +526,13 @@ async function notifyAdminAboutOrder(order) {
       } else {
         await adminBot.sendMessage(chatId, message, options);
       }
+      adminSent++;
       console.log('[notifyAdminAboutOrder] Sent to admin:', chatId);
     } catch (err) {
       console.error('[notifyAdminAboutOrder] Failed to send to:', chatId, err.message);
     }
   }
+  if (adminSent > 0) markNotificationSent(order.id, 'admin_new_order');
 }
 
 // ─────────────────────────────────────────────
@@ -613,7 +636,6 @@ async function handleOrderCallback(callbackQuery) {
 // ─────────────────────────────────────────────
 async function notifySellerAboutOrder(order) {
   if (!order) return;
-  if (!shouldSendNotification(order.id, 'seller_order')) return;
 
   if (!shopBot && !ensureShopBot()) {
     console.error('[notifySellerAboutOrder] shopBot not available — задайте BOT_TOKEN_SHOP');
@@ -667,17 +689,18 @@ async function notifySellerAboutOrder(order) {
       noChatId.push(shop);
       continue;
     }
-    if (Number(shop.telegram_chat_id) === Number(order.customer_chat_id)) continue;
+    const shopNotifyKey = `seller_order:${phoneDigits(shop.phone)}`;
+    if (!canSendNotification(order.id, shopNotifyKey)) continue;
     try {
       await bot.sendMessage(shop.telegram_chat_id, message, { parse_mode: 'HTML', reply_markup: keyboard });
       console.log('[notifySellerAboutOrder] Notified shop:', shop.phone, 'chat:', shop.telegram_chat_id);
       sent++;
+      markNotificationSent(order.id, shopNotifyKey);
     } catch (e) {
       console.error('[notifySellerAboutOrder] Error:', shop.phone, e.message);
       noChatId.push(shop);
     }
   }
-
   if (noChatId.length) await notifyAdminShopsNotLinked(order, { noChatId });
   if (!sent) console.error('[notifySellerAboutOrder] No shop received order', order.id);
 }
@@ -1327,6 +1350,7 @@ async function notifyBuyerInquirySent(d) {
 const shopAuthState = new Map();
 
 function initShopBot() {
+  if (shopBot) return;
   const token = process.env.BOT_TOKEN_SHOP;
   if (!token) { console.log('BOT_TOKEN_SHOP не задан — shopBot не запущен'); return; }
   try {
@@ -1595,6 +1619,18 @@ function initShopBot() {
         return;
       }
 
+      if (!updated.customer_chat_id) {
+        const resolved = await resolveChatId({
+          phone: updated.customer_phone,
+          username: updated.customer_telegram,
+        });
+        if (resolved) {
+          await db.from('orders').update({ customer_chat_id: resolved }).eq('id', orderId);
+          updated.customer_chat_id = resolved;
+          console.log('[shopBot] Restored customer_chat_id:', resolved, 'order:', orderId);
+        }
+      }
+
       await shopBot.answerCallbackQuery(q.id, { text: labels[newStatus] || 'OK' });
 
       let reply = `<b>${labels[newStatus] || newStatus}</b>\nЗаказ #${orderId}\n`;
@@ -1661,7 +1697,7 @@ async function notifyCustomerPaymentConfirmed(order) {
 async function notifyCustomerPaymentRejected(order) {
   if (!userBot && !ensureUserBot()) return;
   if (!order) return;
-  if (!shouldSendNotification(order.id, 'customer_payment_rejected')) return;
+  if (!canSendNotification(order.id, 'customer_payment_rejected')) return;
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
@@ -1676,6 +1712,7 @@ async function notifyCustomerPaymentRejected(order) {
 
   try {
     await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+    markNotificationSent(order.id, 'customer_payment_rejected');
     console.log('[notifyCustomerPaymentRejected] Sent to:', chatId);
   } catch (e) {
     console.log('[notifyCustomerPaymentRejected]', e.message);
@@ -1688,10 +1725,8 @@ async function notifyCustomerPaymentRejected(order) {
 async function notifyCustomerOrderReady(order, shop, photoSource) {
   if (!order?.id) return false;
   const isFreshPhoto = Buffer.isBuffer(photoSource);
-  if (!isFreshPhoto) {
-    const dedupKey = photoSource ? 'customer_ready_photo' : 'customer_status_ready';
-    if (!shouldSendNotification(order.id, dedupKey)) return false;
-  }
+  const dedupKey = isFreshPhoto ? null : (photoSource ? 'customer_ready_photo' : 'customer_status_ready');
+  if (dedupKey && !canSendNotification(order.id, dedupKey)) return false;
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
@@ -1707,12 +1742,18 @@ async function notifyCustomerOrderReady(order, shop, photoSource) {
     `📦 Заказ #${order.id}`;
 
   const src = photoSource || order.delivery_photo_url;
+  let ok = false;
   if (!src) {
-    await trySendToCustomer(chatId, text);
-    return true;
+    const r = await trySendToCustomer(chatId, text);
+    ok = !!r?.ok;
+  } else {
+    ok = await sendPhotoToCustomer(chatId, src, { caption: text, parse_mode: 'HTML' });
+    if (!ok) {
+      const r = await trySendToCustomer(chatId, text + '\n\n<i>Фото временно недоступно — свяжитесь с @rebuket_admin</i>');
+      ok = !!r?.ok;
+    }
   }
-  const ok = await sendPhotoToCustomer(chatId, src, { caption: text, parse_mode: 'HTML' });
-  if (!ok) await trySendToCustomer(chatId, text + '\n\n<i>Фото временно недоступно — свяжитесь с @rebuket_admin</i>');
+  if (ok && dedupKey) markNotificationSent(order.id, dedupKey);
   return ok;
 }
 
@@ -1725,16 +1766,20 @@ async function notifyCustomerStatusChanged(order, shop) {
     return;
   }
 
-  if (!shouldSendNotification(order.id, 'customer_status_' + order.status)) return;
+  const dedupType = 'customer_status_' + order.status;
+  if (!canSendNotification(order.id, dedupType)) return;
 
   const chatId = await resolveCustomerChatId(order);
   if (!chatId) {
-    console.log('[notifyCustomerStatusChanged] no chat_id for order', order.id);
+    console.log('[notifyCustomerStatusChanged] no chat_id for order', order.id,
+      'phone:', order.customer_phone, 'tg:', order.customer_telegram);
     return;
   }
+  order.customer_chat_id = chatId;
 
   const shopName = shop?.shop_name || 'Магазин';
   const orderId  = order.id;
+  let sent = false;
 
   // Статические статусы
   const statusCards = {
@@ -1758,13 +1803,11 @@ async function notifyCustomerStatusChanged(order, shop) {
   const card = statusCards[order.status];
   if (card) {
     const text = `${card.emoji} <b>${card.title}</b>\n\n${card.body}\n\n📦 Заказ #${orderId}\n💰 ${(Number(order.total)||0).toLocaleString('ru')} сом`;
-    try { await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' }); }
-    catch (e) { console.log('[notifyCustomerStatusChanged]', e.message); }
-    return;
-  }
-
-  // Доставлен — кнопки подтверждения
-  if (order.status === 'delivered') {
+    try {
+      await userBot.sendMessage(chatId, text, { parse_mode: 'HTML' });
+      sent = true;
+    } catch (e) { console.log('[notifyCustomerStatusChanged]', order.status, e.message); }
+  } else if (order.status === 'delivered') {
     const text = `🚚 <b>Ваш заказ доставлен!</b>\n\nПожалуйста, подтвердите получение в течение <b>2 часов</b>. Если не подтвердите — заказ будет автоматически завершён.\n\n📦 Заказ #${orderId}\n💐 ${shopName}`;
     try {
       const opts = {
@@ -1782,18 +1825,18 @@ async function notifyCustomerStatusChanged(order, shop) {
       } else {
         await userBot.sendMessage(chatId, text, opts);
       }
+      sent = true;
     } catch (e) { console.log('[notifyCustomerStatusChanged delivered]', e.message); }
-    return;
-  }
-
-  // Возврат оформлен
-  if (order.status === 'refunded') {
+  } else if (order.status === 'refunded') {
     try {
       await userBot.sendMessage(chatId,
         `✅ <b>Возврат оформлен</b>\n\nЗаказ #${orderId} — деньги будут возвращены. Свяжитесь с @rebuket_admin.`,
         { parse_mode: 'HTML' });
-    } catch(_) {}
+      sent = true;
+    } catch (e) { console.log('[notifyCustomerStatusChanged refunded]', e.message); }
   }
+
+  if (sent) markNotificationSent(order.id, dedupType);
 }
 
 // ─────────────────────────────────────────────
@@ -1989,19 +2032,29 @@ function startAutoConfirmInterval() {
 const notificationCache = new Map();
 const NOTIFICATION_DEDUP_WINDOW = 5 * 60 * 1000; // 5 minutes
 
-function shouldSendNotification(orderId, type) {
+function canSendNotification(orderId, type) {
   const key = `${orderId}:${type}`;
   const lastSent = notificationCache.get(key);
   const now = Date.now();
   if (lastSent && (now - lastSent) < NOTIFICATION_DEDUP_WINDOW) {
-    console.log(`[shouldSendNotification] Skipping duplicate ${type} for order ${orderId}`);
+    console.log(`[canSendNotification] Skipping duplicate ${type} for order ${orderId}`);
     return false;
   }
-  notificationCache.set(key, now);
-  // Clean old entries
+  return true;
+}
+
+function markNotificationSent(orderId, type) {
+  const now = Date.now();
+  notificationCache.set(`${orderId}:${type}`, now);
   for (const [k, v] of notificationCache) {
     if (now - v > NOTIFICATION_DEDUP_WINDOW) notificationCache.delete(k);
   }
+}
+
+/** @deprecated use canSendNotification + markNotificationSent */
+function shouldSendNotification(orderId, type) {
+  if (!canSendNotification(orderId, type)) return false;
+  markNotificationSent(orderId, type);
   return true;
 }
 
@@ -2072,4 +2125,5 @@ module.exports = {
   saveUsernameMapping,
   getChatIdByUsername,
   patchOrderChatId,
+  phoneDigits,
 };

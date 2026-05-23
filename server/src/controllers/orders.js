@@ -72,9 +72,13 @@ exports.createOrder = async (req, res) => {
       .from('shops')
       .select('phone, commission_percent')
       .eq('status', 'active');
+    const { phoneDigits } = require('../services/telegram');
     const shopByPhone = new Map();
     for (const s of (activeShops || [])) {
-      shopByPhone.set((s.phone || '').toString().trim(), s);
+      const raw = (s.phone || '').toString().trim();
+      shopByPhone.set(raw, s);
+      const digits = phoneDigits(raw);
+      if (digits) shopByPhone.set(digits, s);
     }
     const shopPhoneSet = new Set(shopByPhone.keys());
 
@@ -87,7 +91,10 @@ exports.createOrder = async (req, res) => {
         .select('id, seller_phone, title, price, commission_percent, pricing_mode')
         .in('id', productIds);
       for (const p of (prods || [])) productById.set(p.id, p);
-      const ecoItems = (prods || []).filter(p => !shopPhoneSet.has((p.seller_phone || '').toString().trim()));
+      const ecoItems = (prods || []).filter(p => {
+        const sp = (p.seller_phone || '').toString().trim();
+        return !shopPhoneSet.has(sp) && !shopPhoneSet.has(phoneDigits(sp));
+      });
       if (ecoItems.length > 0) {
         return res.status(400).json({
           error: 'В корзине есть эко-товары. Эко-товары заказываются через Telegram, а не через корзину.',
@@ -107,7 +114,7 @@ exports.createOrder = async (req, res) => {
       const pid = it.id || it.pub_id;
       const prod = productById.get(pid);
       const sellerPhone = (it.seller_phone || prod?.seller_phone || '').toString().trim();
-      const shop = shopByPhone.get(sellerPhone);
+      const shop = shopByPhone.get(sellerPhone) || shopByPhone.get(phoneDigits(sellerPhone));
       const pct = Commission.effectivePercent(prod, shop, settings);
       const mode = Commission.effectiveMode(prod);
       // Trust DB price over client-supplied to prevent tampering
