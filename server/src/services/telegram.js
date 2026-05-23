@@ -591,13 +591,51 @@ const SHOP_REMINDER_MS =
 const SHOP_REJECT_MS =
   (Number(process.env.SHOP_ORDER_TIMEOUT_MINUTES) || 10) * 60 * 1000;
 const SHOP_RESPONSE_TIMEOUT_MS = SHOP_REJECT_MS;
-const SHOP_TIMEOUT_POLL_MS = 60 * 1000;
+const SHOP_TIMEOUT_POLL_MS = 30 * 1000;
 const SHOP_TIMEOUT_WAIT_STATUSES = ['payment_confirmed', 'confirmed'];
 
 function shopWaitStartedAt(order) {
+  if (order.shop_response_deadline_at && order.payment_confirmed_at) {
+    const end = new Date(order.shop_response_deadline_at).getTime();
+    return end - SHOP_REJECT_MS;
+  }
   const t = order.payment_confirmed_at || order.updated_at;
   const ms = t ? new Date(t).getTime() : 0;
   return Number.isFinite(ms) ? ms : 0;
+}
+
+function orderRejectDeadlineMs(order) {
+  if (order.shop_response_deadline_at) {
+    const ms = new Date(order.shop_response_deadline_at).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  const start = shopWaitStartedAt(order);
+  return start ? start + SHOP_REJECT_MS : null;
+}
+
+/** Старт таймера ответа магазина (10 мин → автоотклонение) */
+async function setShopResponseTimer(orderId, existingStartIso) {
+  const db = createSupabaseClient();
+  const startMs = existingStartIso ? Date.parse(existingStartIso) : Date.now();
+  const start = new Date(startMs).toISOString();
+  const deadline = new Date(startMs + SHOP_REJECT_MS).toISOString();
+
+  const payloads = [
+    { payment_confirmed_at: start, shop_response_deadline_at: deadline },
+    { payment_confirmed_at: start },
+  ];
+  for (const payload of payloads) {
+    const { error } = await db.from('orders').update(payload).eq('id', orderId);
+    if (!error) {
+      console.log('[setShopResponseTimer] order', orderId, 'deadline', deadline);
+      return { start, deadline };
+    }
+    if (!/column/i.test(error.message || '')) {
+      console.log('[setShopResponseTimer]', orderId, error.message);
+      break;
+    }
+  }
+  return { start, deadline };
 }
 
 async function findShopsBySellerPhones(sellerPhones) {
@@ -762,13 +800,9 @@ async function handleOrderCallback(callbackQuery) {
     const db = createSupabaseClient();
 
     // Обновляем только из pending — защита от повторных нажатий и дублей
-    const confirmPayload = { status };
-    if (status === 'payment_confirmed') {
-      confirmPayload.payment_confirmed_at = new Date().toISOString();
-    }
     const { data: updatedOrder, error } = await db
       .from('orders')
-      .update(confirmPayload)
+      .update({ status })
       .eq('id', orderId)
       .eq('status', 'pending')
       .select()
@@ -800,6 +834,7 @@ async function handleOrderCallback(callbackQuery) {
 
     let customerNotify = null;
     if (status === 'payment_confirmed') {
+      try { await setShopResponseTimer(orderId); } catch (e) { console.error('[handleOrderCallback] setShopResponseTimer:', e.message); }
       try { await notifySellerAboutOrder(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifySellerAboutOrder:', e.message); }
       try { customerNotify = await notifyCustomerOnPaymentConfirmed(updatedOrder); } catch (e) { console.error('[handleOrderCallback] notifyCustomer:', e.message); }
     } else if (status === 'rejected') {
@@ -917,7 +952,15 @@ async function notifySellerAboutOrder(order) {
     }
   }
   if (noChatId.length) await notifyAdminShopsNotLinked(order, { noChatId });
-  if (!sent) console.error('[notifySellerAboutOrder] No shop received order', order.id);
+  if (!sent) {
+    console.error('[notifySellerAboutOrder] No shop received order', order.id);
+  } else {
+    try {
+      await setShopResponseTimer(order.id);
+    } catch (e) {
+      console.error('[notifySellerAboutOrder] setShopResponseTimer:', e.message);
+    }
+  }
 }
 
 async function notifyAdminAboutShopOrder(order, shop) {
@@ -2418,8 +2461,9 @@ async function notifyShopsShopTimeoutRejected(order) {
   const shops = await findShopsBySellerPhones(sellerPhones);
   const mins = Math.round(SHOP_RESPONSE_TIMEOUT_MS / 60000);
   const text =
-    `⏱ <b>Заказ #${order.id} отменён автоматически</b>\n\n` +
-    `Вы не приняли и не отклонили заказ в течение ${mins} мин. после подтверждения оплаты.`;
+    `❌ <b>Заказ #${order.id} отклонён автоматически</b>\n\n` +
+    `Вы не нажали «Принять» или «Отклонить» в течение <b>${mins} мин.</b>\n` +
+    `Заказ снят с обработки.`;
 
   for (const shop of shops) {
     if (!shop.telegram_chat_id) continue;
@@ -2468,9 +2512,27 @@ async function autoRejectShopOrder(db, order) {
 }
 
 async function processShopOrderTimeouts() {
-  const { createSupabaseClient } = require('../db/supabase');
   const db = createSupabaseClient();
   const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+
+  const { data: expiredByDeadline, error: expErr } = await db
+    .from('orders')
+    .select('*')
+    .in('status', SHOP_TIMEOUT_WAIT_STATUSES)
+    .not('shop_response_deadline_at', 'is', null)
+    .lte('shop_response_deadline_at', nowIso)
+    .limit(40);
+
+  if (expErr && !/column/i.test(expErr.message || '')) {
+    console.log('[processShopOrderTimeouts] deadline query:', expErr.message);
+  }
+
+  const rejectedIds = new Set();
+  for (const order of expiredByDeadline || []) {
+    const updated = await autoRejectShopOrder(db, order);
+    if (updated) rejectedIds.add(order.id);
+  }
 
   const { data: orders, error } = await db
     .from('orders')
@@ -2482,19 +2544,28 @@ async function processShopOrderTimeouts() {
     console.log('[processShopOrderTimeouts] query error:', error.message);
     return;
   }
-  if (!orders?.length) return;
 
-  for (const order of orders) {
-    const started = shopWaitStartedAt(order);
-    if (!started) continue;
-    const age = now - started;
+  for (const order of orders || []) {
+    if (rejectedIds.has(order.id)) continue;
 
-    if (age >= SHOP_REJECT_MS) {
+    let deadline = orderRejectDeadlineMs(order);
+    if (!deadline) {
+      try {
+        const t = await setShopResponseTimer(order.id);
+        deadline = Date.parse(t.deadline);
+      } catch (e) {
+        console.log('[processShopOrderTimeouts] init timer', order.id, e.message);
+        continue;
+      }
+    }
+
+    if (now >= deadline) {
       await autoRejectShopOrder(db, order);
       continue;
     }
 
-    if (age >= SHOP_REMINDER_MS) {
+    const started = shopWaitStartedAt(order);
+    if (started && now - started >= SHOP_REMINDER_MS) {
       try { await notifyShopsShopReminder(order); } catch (e) {
         console.log('[processShopOrderTimeouts] shop reminder:', e.message);
       }
@@ -2623,6 +2694,7 @@ module.exports = {
   notifyAdminAboutOrder,
   notifyAdminAboutShopOrder,
   notifySellerAboutOrder,
+  setShopResponseTimer,
   notifyCustomerPaymentConfirmed,
   notifyCustomerPaymentRejected,
   notifyCustomerStatusChanged,

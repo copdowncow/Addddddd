@@ -332,14 +332,9 @@ exports.updateOrderStatus = async (req, res) => {
     // Backward compat: 'confirmed' from admin = payment_confirmed (notifies seller)
     const newStatus = status === 'confirmed' ? 'payment_confirmed' : status;
 
-    const statusPayload = { status: newStatus };
-    if (newStatus === 'payment_confirmed') {
-      statusPayload.payment_confirmed_at = new Date().toISOString();
-    }
-
     let query = getClient()
       .from('orders')
-      .update(statusPayload)
+      .update({ status: newStatus })
       .eq('id', id);
 
     if (newStatus === 'payment_confirmed' || newStatus === 'rejected') {
@@ -356,7 +351,8 @@ exports.updateOrderStatus = async (req, res) => {
     if (newStatus === 'payment_confirmed') {
       console.log('[updateOrderStatus] Payment confirmed for order', data.id, '— notifying shop + customer');
       try {
-        const { notifySellerAboutOrder, notifyCustomerOnPaymentConfirmed } = require('../services/telegram');
+        const { notifySellerAboutOrder, notifyCustomerOnPaymentConfirmed, setShopResponseTimer } = require('../services/telegram');
+        await setShopResponseTimer(data.id);
         await notifySellerAboutOrder(data);
         await notifyCustomerOnPaymentConfirmed(data);
       } catch (e) {
