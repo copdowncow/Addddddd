@@ -5,6 +5,7 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_approved BOOLEAN DEFAULT NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_feedback TEXT DEFAULT NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_approved_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_feedback_at TIMESTAMPTZ DEFAULT NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS photo_sent_at TIMESTAMPTZ DEFAULT NULL;
 
 COMMENT ON COLUMN orders.photo_approved IS 'Customer photo approval: true=liked, false=disliked, null=no response yet';
 COMMENT ON COLUMN orders.photo_feedback IS 'Customer feedback text when photo is disliked';

@@ -27,7 +27,6 @@ INSERT INTO public.products (title, description, category, price, city, seller_n
 ('Эко-кашпо с травами', 'Ручная работа, эко-подарок для дома', 'bear', 180, 'Душанбе', 'Частный цветочник', '+992911111222', 'active', 'eko-kashpo-travy', ARRAY['https://via.placeholder.com/400x300?text=Eco+Herbs'], 'eco', NULL)
 ON CONFLICT (slug) DO NOTHING;
 
--- Verify data was inserted
 SELECT COUNT(*) as shops_count FROM public.shops WHERE status = 'active';
 SELECT COUNT(*) as products_count FROM public.products WHERE status = 'active';
 SELECT COUNT(*) as admins_count FROM public.admins;

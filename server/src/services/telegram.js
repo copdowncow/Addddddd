@@ -2077,7 +2077,7 @@ function initShopBot() {
       }
 
       // Обновляем заказ - сбрасываем фидбек при повторной отправке
-      const updates = { status: 'ready', delivery_photo_url: photoUrl };
+      const updates = { status: 'ready', delivery_photo_url: photoUrl, photo_sent_at: new Date().toISOString() };
       if (isRetry) {
         updates.photo_approved = null;
         updates.photo_feedback = null;
@@ -3053,7 +3053,7 @@ function startAutoConfirmInterval() {
 // ⏱ Авто-одобрение фото если клиент не реагирует
 // ─────────────────────────────────────────────
 function startAutoApprovePhotoInterval() {
-  const AUTO_APPROVE_MS = 30 * 60 * 1000; // 30 минут
+  const AUTO_APPROVE_MS = 10 * 60 * 1000; // 10 минут
   setInterval(async () => {
     try {
       const { createSupabaseClient } = require('../db/supabase');
@@ -3066,7 +3066,7 @@ function startAutoApprovePhotoInterval() {
         .eq('status', 'ready')
         .not('delivery_photo_url', 'is', null)
         .is('photo_approved', null)
-        .lt('updated_at', cutoff)
+        .or(`photo_sent_at.lt.${cutoff},and(photo_sent_at.is.null,updated_at.lt.${cutoff})`)
         .limit(50);
 
       for (const o of orders || []) {
@@ -3077,7 +3077,7 @@ function startAutoApprovePhotoInterval() {
 
         if (o.customer_chat_id && userBot) {
           await userBot.sendMessage(o.customer_chat_id,
-            `✅ Фото букета автоматически одобрено (прошло 30 минут).\n\n📦 Заказ #${o.id}`,
+            `✅ Фото букета автоматически одобрено (прошло 10 минут).\n\n📦 Заказ #${o.id}`,
             { parse_mode: 'HTML' }
           ).catch(_=>{});
         }
@@ -3087,8 +3087,8 @@ function startAutoApprovePhotoInterval() {
     } catch (e) {
       console.log('[auto-approve-photo interval]', e.message);
     }
-  }, 5 * 60 * 1000); // Проверяем каждые 5 минут
-  console.log('⏱ Auto-approve photo interval запущен (каждые 5 мин, таймаут 30 мин)');
+  }, 1 * 60 * 1000); // Проверяем каждую 1 минуту
+  console.log('⏱ Auto-approve photo interval запущен (каждые 1 мин, таймаут 10 мин)');
 }
 
 // ─────────────────────────────────────────────
