@@ -1527,18 +1527,29 @@ async function publishToChannel(p) {
 
   let caption;
   if (isShop) {
+    // Формируем строку о наличии/заказе
+    let availabilityLine = '';
+    if (p.availability_type === 'on_order') {
+      availabilityLine = `⏳ <b>На заказ${p.prepare_hours ? ` · Готовится ${p.prepare_hours} ч` : ''}</b>\n`;
+    } else {
+      const stockQty = p.stock_quantity;
+      if (stockQty && stockQty < 999999) {
+        availabilityLine = `✅ <b>В наличии: ${stockQty} шт</b>\n`;
+      } else {
+        availabilityLine = `✅ <b>В наличии</b>\n`;
+      }
+    }
+
     caption =
       `🏪 <b>${escHtml(p.seller_name || 'Магазин')}</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `${em} <b>${escHtml(p.title)}</b>\n` +
       `📍 ${escHtml(p.city || '—')}\n` +
       (p.size ? `📏 <b>Размер: ${escHtml(p.size)}</b>\n` : '') +
-      (p.availability_type === 'on_order'
-        ? `⏳ <b>На заказ${p.prepare_hours ? ` · ${p.prepare_hours} ч` : ''}</b>\n`
-        : (p.availability_type ? `✅ <b>В наличии</b>\n` : '')) +
+      availabilityLine +
       `\n💰 <b>${buyerPrice.toLocaleString('ru-RU')} сомони</b>\n` +
       (code ? `🆔 ${code}\n` : '') +
-      `\n📲 Заказать: ${admin}\n` +
+      `\n📲 По вопросам: ${admin}\n` +
       `\n<a href="${url}">🛒 Смотреть в магазине ReBuket</a>`;
   } else {
     caption =

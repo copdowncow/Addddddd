@@ -466,6 +466,14 @@ exports.createProduct = async (req, res) => {
           return res.status(400).json({ error: 'Укажите срок готовности в часах (для «на заказ»)' });
         }
       }
+      // Для сладостей время готовки обязательно (всегда на заказ)
+      if (category === 'sweets') {
+        if (!prepare_hours || Number(prepare_hours) < 1) {
+          return res.status(400).json({ error: 'Для сладостей укажите время готовки в часах' });
+        }
+        availType = 'on_order';
+        prepHrs = Number(prepare_hours);
+      }
     }
 
     const stockVal = stock_quantity ?? stock;
