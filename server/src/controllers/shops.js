@@ -3,7 +3,7 @@ const bcrypt    = require('bcryptjs');
 const jwt       = require('jsonwebtoken');
 const sharp     = require('sharp');
 const { getClient, uploadPhoto } = require('../db/supabase');
-const { notifyShopRegistration, notifyProductEdited } = require('../services/telegram');
+const { notifyShopRegistration, notifyProductEdited, markExpiredInChannel } = require('../services/telegram');
 const { enrichProductPricing } = require('../services/productPricing');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'rebuket_secret_key';
@@ -161,7 +161,7 @@ exports.login = async (req, res) => {
     const token = jwt.sign(
       { shop_id: shop.id, phone: shop.phone, role: 'shop' },
       JWT_SECRET,
-      { expiresIn: '30d' }
+      { expiresIn: '3650d' }
     );
 
     res.json({
@@ -322,7 +322,7 @@ exports.updateProfile = async (req, res) => {
       token = jwt.sign(
         { shop_id: data.id, phone: data.phone, role: 'shop' },
         JWT_SECRET,
-        { expiresIn: '30d' }
+        { expiresIn: '3650d' }
       );
     }
 
@@ -486,7 +486,7 @@ exports.setProductStatus = async (req, res) => {
 
     const { data: product, error: fetchErr } = await getClient()
       .from('products')
-      .select('id,seller_phone,status')
+      .select('*')
       .eq('id', id)
       .single();
 
@@ -520,6 +520,14 @@ exports.setProductStatus = async (req, res) => {
     }
 
     if (error) throw error;
+
+    // Обновляем пост в Telegram канале при снятии товара
+    if (action === 'delist' && data.channel_message_id && data.channel_name) {
+      markExpiredInChannel(data).catch(e =>
+        console.log('markExpiredInChannel error:', e.message)
+      );
+    }
+
     res.json({
       ok: true,
       data,

@@ -45,6 +45,10 @@ function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+function roundCommission(n) {
+  return Math.round(Number(n));
+}
+
 // Calculate commission breakdown for a single line
 //   listedPrice  — price as stored on product
 //   pct          — commission percent (0..100)
@@ -57,7 +61,7 @@ function calculate(listedPrice, pct, mode) {
     return { customer_pays: 0, seller_payout: 0, platform_fee: 0, commission_percent: c, pricing_mode: m };
   }
   if (m === 'inclusive') {
-    const platform_fee = round2(price * c / 100);
+    const platform_fee = roundCommission(price * c / 100);
     const seller_payout = round2(price - platform_fee);
     return { customer_pays: round2(price), seller_payout, platform_fee, commission_percent: c, pricing_mode: m };
   }

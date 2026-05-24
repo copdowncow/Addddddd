@@ -435,9 +435,13 @@ exports.createProduct = async (req, res) => {
       }
     } catch (_) { /* if shops query fails, fall back to eco/legacy */ }
 
-    // City still required for non-shop listings
+    // City required for non-shop listings, optional for shops
     if (listing_type !== 'shop' && !city) {
       return res.status(400).json({ error: 'Укажите город' });
+    }
+    // For shops, city is optional but recommended
+    if (listing_type === 'shop' && !city) {
+      console.log('[createProduct] Warning: shop product without city, phone:', seller_phone);
     }
 
     // Photo requirement: shops need 1+, eco listings need 3+

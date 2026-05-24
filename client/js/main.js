@@ -1494,7 +1494,7 @@ function renderSellPhotos() {
     return '<div class="photo-thumb"><img src="' + url + '"><button class="photo-del" onclick="removePhoto(' + i + ')">x</button></div>';
   }).join('');
   if (hint) {
-    const minNeeded = getShopSession().phone ? 1 : 3;
+    const minNeeded = 3;
     if (sellFiles.length === 0) {
       hint.textContent = 'Минимум ' + minNeeded + ' фото';
       hint.style.color = 'var(--gray)';
@@ -1664,7 +1664,7 @@ export function updateSellPageLayout() {
   }
 
   if (hint) {
-    const minNeeded = shop.phone ? 1 : 3;
+    const minNeeded = 3;
     hint.textContent = 'Загружено ' + (window.sellFiles ? window.sellFiles.length : 0) + ' из ' + minNeeded + ' (минимум ' + minNeeded + ' фото)';
   }
   updatePricePreview();
@@ -1729,10 +1729,10 @@ window.submitListing = async () => {
     toast('Укажите когда получили!','err');
     return;
   }
-  const minPhotos = isShopUser ? 1 : 3;
+  const minPhotos = 3;
   if (sellFiles.length < minPhotos) {
     document.getElementById('photo-hint')?.scrollIntoView({ behavior:'smooth', block:'center' });
-    toast(isShopUser ? 'Загрузите минимум 1 фотографию!' : 'Загрузите минимум 3 фотографии!','err');
+    toast('Загрузите минимум 3 фотографии!','err');
     return;
   }
 

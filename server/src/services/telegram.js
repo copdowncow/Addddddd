@@ -1239,6 +1239,7 @@ function initBots() {
   initShopBot();
   startAutoConfirmInterval();
   startShopOrderTimeoutInterval();
+  startAutoApprovePhotoInterval();
 }
 
 // ─────────────────────────────────────────────
@@ -2047,6 +2048,9 @@ function initShopBot() {
       const photoUrl = await uploadPhoto(buffer, `delivery-${orderId}-${Date.now()}.jpg`, 'image/jpeg');
       const shop = await getShopByTelegramChat(chatId);
 
+      // Проверяем, это повторное фото (после дизлайка) или первое
+      const isRetry = orderRow.photo_approved === false && orderRow.photo_feedback;
+
       const orderForNotify = { ...orderRow, delivery_photo_url: photoUrl, status: 'ready' };
       let notifyResult = { ok: false, reason: 'no_chat_id' };
       try {
@@ -2056,9 +2060,13 @@ function initShopBot() {
         notifyResult = { ok: false, reason: 'send_failed', error: e.message };
       }
 
-      await db.from('orders')
-        .update({ status: 'ready', delivery_photo_url: photoUrl })
-        .eq('id', orderId);
+      // Обновляем заказ - сбрасываем фидбек при повторной отправке
+      const updates = { status: 'ready', delivery_photo_url: photoUrl };
+      if (isRetry) {
+        updates.photo_approved = null;
+        updates.photo_feedback = null;
+      }
+      await db.from('orders').update(updates).eq('id', orderId);
 
       const botUser = getBotUsername();
       const customerLink = buildCustomerBotLink(orderId);
@@ -2321,19 +2329,27 @@ async function notifyCustomerOrderReady(order, shop, photoSource, photoUrlHint) 
   const text =
     `📸 <b>Ваш букет готов!</b>\n\n` +
     `<b>${shopName}</b> отправил фото готового заказа. Скоро в пути! 🚚\n\n` +
-    `📦 Заказ #${order.id}`;
+    `📦 Заказ #${order.id}\n\n` +
+    `👇 <b>Оцените фото букета:</b>`;
+
+  const keyboard = {
+    inline_keyboard: [[
+      { text: '👍 Отлично', callback_data: `photo_like:${order.id}` },
+      { text: '👎 Не устраивает', callback_data: `photo_dislike:${order.id}` }
+    ]]
+  };
 
   const urlFallback = photoUrlHint || order.delivery_photo_url;
   let photoSent = false;
   let lastError = null;
 
   if (Buffer.isBuffer(photoSource) && photoSource.length > 0) {
-    const r = await sendPhotoToCustomer(chatId, photoSource, { caption: text, parse_mode: 'HTML' });
+    const r = await sendPhotoToCustomer(chatId, photoSource, { caption: text, parse_mode: 'HTML', reply_markup: keyboard });
     photoSent = r.ok;
     lastError = r.error;
   }
   if (!photoSent && urlFallback) {
-    const r = await sendPhotoToCustomer(chatId, urlFallback, { caption: text, parse_mode: 'HTML' });
+    const r = await sendPhotoToCustomer(chatId, urlFallback, { caption: text, parse_mode: 'HTML', reply_markup: keyboard });
     photoSent = r.ok;
     lastError = r.error;
   }
@@ -2446,6 +2462,66 @@ function registerCustomerOrderHandlers() {
 
   userBot.on('callback_query', async (q) => {
     const data = q.data || '';
+
+    // Обработка лайк/дизлайк фото
+    const photoMatch = data.match(/^photo_(like|dislike):(.+)$/);
+    if (photoMatch) {
+      const [, reaction, orderId] = photoMatch;
+      const chatId = q.message?.chat?.id;
+      if (!chatId) return;
+
+      await userBot.answerCallbackQuery(q.id).catch(() => {});
+
+      try {
+        const { createSupabaseClient } = require('../db/supabase');
+        const db = createSupabaseClient();
+        const order = await ensureCustomerOwnsOrder(db, orderId, chatId);
+        if (!order) {
+          await userBot.sendMessage(chatId, '❌ Заказ не найден.').catch(() => {});
+          return;
+        }
+
+        // Убираем кнопки
+        if (q.message) {
+          try {
+            await userBot.editMessageReplyMarkup({ inline_keyboard: [] }, {
+              chat_id: q.message.chat.id,
+              message_id: q.message.message_id,
+            });
+          } catch (_) {}
+        }
+
+        if (reaction === 'like') {
+          // Клиент доволен фото - продолжаем процесс
+          await db.from('orders').update({ photo_approved: true, photo_approved_at: new Date().toISOString() }).eq('id', orderId);
+          await userBot.sendMessage(chatId, `👍 <b>Отлично!</b>\n\nМагазин скоро доставит ваш заказ.\n\n📦 Заказ #${orderId}`, { parse_mode: 'HTML' });
+
+          // Уведомляем магазин
+          try {
+            let items = order.items;
+            if (typeof items === 'string') items = JSON.parse(items);
+            const sellerPhones = [...new Set((items || []).map(it => it.seller_phone).filter(Boolean))];
+            const shops = await findShopsBySellerPhones(sellerPhones);
+            for (const s of shops) {
+              if (s.telegram_chat_id) {
+                await sendToShopChat(s.telegram_chat_id, `👍 Клиент одобрил фото заказа #${orderId}! Можно доставлять.`).catch(() => {});
+              }
+            }
+          } catch (_) {}
+        } else if (reaction === 'dislike') {
+          // Клиент недоволен - запрашиваем причину
+          customerPendingRefundReason.set('photo_feedback:' + chatId, orderId);
+          await userBot.sendMessage(chatId,
+            `👎 <b>Что не устраивает в фото?</b>\n\nОпишите проблему одним сообщением, и магазин переделает букет.\n\n📦 Заказ #${orderId}\n\n<i>Отмена: /cancel</i>`,
+            { parse_mode: 'HTML' });
+        }
+      } catch (e) {
+        console.error('[photo feedback callback]', e.message);
+        try { await userBot.sendMessage(chatId, '❌ Ошибка: ' + e.message); } catch (_) {}
+      }
+      return;
+    }
+
     const m = data.match(/^cust_(confirm|problem):(.+)$/);
     if (!m) return;
 
@@ -2523,9 +2599,13 @@ function registerCustomerOrderHandlers() {
 
   userBot.onText(/\/cancel/, async (msg) => {
     const key = customerChatKey(msg.chat.id);
+    const photoKey = 'photo_feedback:' + msg.chat.id;
     if (customerPendingRefundReason.has(key)) {
       customerPendingRefundReason.delete(key);
       await userBot.sendMessage(msg.chat.id, '↩️ Запрос на возврат отменён.');
+    } else if (customerPendingRefundReason.has(photoKey)) {
+      customerPendingRefundReason.delete(photoKey);
+      await userBot.sendMessage(msg.chat.id, '↩️ Отзыв о фото отменён.');
     }
   });
 
@@ -2533,6 +2613,62 @@ function registerCustomerOrderHandlers() {
     if (!msg.text || msg.text.startsWith('/')) return;
     const chatId = msg.chat.id;
     const pendingKey = customerChatKey(chatId);
+    const photoFeedbackKey = 'photo_feedback:' + chatId;
+
+    // Проверяем, ждем ли мы фидбек по фото
+    const photoOrderId = customerPendingRefundReason.get(photoFeedbackKey);
+    if (photoOrderId) {
+      try {
+        const { createSupabaseClient } = require('../db/supabase');
+        const db = createSupabaseClient();
+        const order = await ensureCustomerOwnsOrder(db, photoOrderId, chatId);
+        if (!order) {
+          customerPendingRefundReason.delete(photoFeedbackKey);
+          await userBot.sendMessage(chatId, '❌ Заказ не найден.');
+          return;
+        }
+        const feedback = msg.text.trim().slice(0, 1000);
+        if (!feedback) {
+          await userBot.sendMessage(chatId, 'ℹ️ Напишите текстом, что не устраивает в фото.');
+          return;
+        }
+
+        // Сохраняем фидбек и отмечаем что фото не одобрено
+        await db.from('orders').update({
+          photo_approved: false,
+          photo_feedback: feedback,
+          photo_feedback_at: new Date().toISOString()
+        }).eq('id', photoOrderId);
+
+        customerPendingRefundReason.delete(photoFeedbackKey);
+
+        await userBot.sendMessage(chatId,
+          `✅ <b>Ваш отзыв отправлен магазину</b>\n\nМагазин переделает букет и отправит новое фото.\n\n📦 Заказ #${photoOrderId}\n📝 Ваш комментарий: ${escHtml(feedback)}`,
+          { parse_mode: 'HTML' });
+
+        // Уведомляем магазин о проблеме с фото
+        try {
+          let items = order.items;
+          if (typeof items === 'string') items = JSON.parse(items);
+          const sellerPhones = [...new Set((items || []).map(it => it.seller_phone).filter(Boolean))];
+          const shops = await findShopsBySellerPhones(sellerPhones);
+          const shopText =
+            `👎 <b>Клиенту не понравилось фото букета</b>\n\n📦 Заказ #${photoOrderId}\n💰 ${(Number(order.total) || Number(order.total_amount) || 0).toLocaleString('ru')} сом\n\n📝 <b>Комментарий клиента:</b>\n${escHtml(feedback)}\n\n<i>Переделайте букет и отправьте новое фото через бот.</i>`;
+          for (const s of shops) {
+            if (s.telegram_chat_id) {
+              await sendToShopChat(s.telegram_chat_id, shopText, { parse_mode: 'HTML' }).catch(() => {});
+            }
+          }
+        } catch (e) {
+          console.error('[photo feedback notify shop]', e.message);
+        }
+      } catch (e) {
+        console.error('[photo feedback]', e.message);
+        await userBot.sendMessage(chatId, '❌ Ошибка: ' + e.message);
+      }
+      return;
+    }
+
     const orderId = customerPendingRefundReason.get(pendingKey);
     if (orderId) {
       try {
@@ -2895,6 +3031,48 @@ function startAutoConfirmInterval() {
     } catch (e) { console.log('[auto-confirm interval]', e.message); }
   }, 10 * 60 * 1000);
   console.log('⏱ Auto-confirm interval запущен (каждые 10 мин)');
+}
+
+// ─────────────────────────────────────────────
+// ⏱ Авто-одобрение фото если клиент не реагирует
+// ─────────────────────────────────────────────
+function startAutoApprovePhotoInterval() {
+  const AUTO_APPROVE_MS = 30 * 60 * 1000; // 30 минут
+  setInterval(async () => {
+    try {
+      const { createSupabaseClient } = require('../db/supabase');
+      const db = createSupabaseClient();
+      const cutoff = new Date(Date.now() - AUTO_APPROVE_MS).toISOString();
+
+      // Находим заказы где фото отправлено, но клиент не отреагировал (photo_approved = null)
+      const { data: orders } = await db.from('orders')
+        .select('id, customer_chat_id, delivery_photo_url')
+        .eq('status', 'ready')
+        .not('delivery_photo_url', 'is', null)
+        .is('photo_approved', null)
+        .lt('updated_at', cutoff)
+        .limit(50);
+
+      for (const o of orders || []) {
+        await db.from('orders').update({
+          photo_approved: true,
+          photo_approved_at: new Date().toISOString()
+        }).eq('id', o.id);
+
+        if (o.customer_chat_id && userBot) {
+          await userBot.sendMessage(o.customer_chat_id,
+            `✅ Фото букета автоматически одобрено (прошло 30 минут).\n\n📦 Заказ #${o.id}`,
+            { parse_mode: 'HTML' }
+          ).catch(_=>{});
+        }
+
+        console.log(`[auto-approve-photo] Order #${o.id} photo auto-approved`);
+      }
+    } catch (e) {
+      console.log('[auto-approve-photo interval]', e.message);
+    }
+  }, 5 * 60 * 1000); // Проверяем каждые 5 минут
+  console.log('⏱ Auto-approve photo interval запущен (каждые 5 мин, таймаут 30 мин)');
 }
 
 // ─────────────────────────────────────────────
