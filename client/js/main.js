@@ -81,7 +81,12 @@ function availabilityLabel(p) {
   if (p.availability_type === 'on_order') {
     return '⏳ На заказ' + (p.prepare_hours ? ' · ' + p.prepare_hours + ' ч' : '');
   }
-  if (p.availability_type === 'in_stock') return '✅ В наличии';
+  if (p.availability_type === 'in_stock') {
+    const s = Number(p.stock_quantity);
+    if (Number.isFinite(s) && s > 0 && s < 999999) return '✅ В наличии: ' + s + ' шт';
+    if (Number.isFinite(s) && s <= 0) return '⛔ Нет в наличии';
+    return '✅ В наличии';
+  }
   return '';
 }
 
@@ -1560,6 +1565,7 @@ window.selectCat = (el) => {
   const val = el.dataset.val;
   document.getElementById('sell-cat-val').value = val;
   updateSizeField(val);
+  updateSellPageLayout();
 };
 
 window.updateBearSizeInput = () => {
@@ -1575,8 +1581,28 @@ window.selectShopAvail = function(val, btn) {
   if (hid) hid.value = val;
   document.querySelectorAll('#shop-avail-chips .chip').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  const wrap = document.getElementById('shop-prep-hours-wrap');
-  if (wrap) wrap.style.display = val === 'on_order' ? 'block' : 'none';
+  const prepWrap = document.getElementById('shop-prep-hours-wrap');
+  if (prepWrap) prepWrap.style.display = val === 'on_order' ? 'block' : 'none';
+  const stockField = document.getElementById('stock-field');
+  if (stockField) stockField.style.display = val === 'in_stock' ? '' : 'none';
+};
+
+window.selectShopSize = function(val, btn) {
+  document.querySelectorAll('#shop-size-chips-wrap .chip').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const textEl = document.getElementById('sell-shop-size-text');
+  if (textEl) textEl.value = '';
+  const hid = document.getElementById('sell-shop-size');
+  if (hid) hid.value = val;
+};
+
+window.updateShopSizeInput = function() {
+  const val = document.getElementById('sell-shop-size-text')?.value.trim();
+  const hid = document.getElementById('sell-shop-size');
+  if (hid) hid.value = val || '';
+  if (val) {
+    document.querySelectorAll('#shop-size-chips-wrap .chip').forEach(b => b.classList.remove('active'));
+  }
 };
 
 window.updatePricePreview = () => {
@@ -1665,7 +1691,16 @@ export function updateSellPageLayout() {
 
   if (hint) {
     const minNeeded = 3;
-    hint.textContent = 'Загружено ' + (window.sellFiles ? window.sellFiles.length : 0) + ' из ' + minNeeded + ' (минимум ' + minNeeded + ' фото)';
+    const loaded = window.sellFiles ? window.sellFiles.length : 0;
+    hint.textContent = 'Загружено ' + loaded + ' из ' + minNeeded + ' (минимум ' + minNeeded + ' фото)';
+  }
+  if (shop.phone) {
+    const avail = document.getElementById('sell-availability-type')?.value || 'in_stock';
+    const stockField = document.getElementById('stock-field');
+    if (stockField) stockField.style.display = avail === 'in_stock' ? '' : 'none';
+    const cat = document.getElementById('sell-cat-val')?.value || '';
+    const shopSizeField = document.getElementById('shop-size-field');
+    if (shopSizeField) shopSizeField.style.display = ['bouquet','basket','bear'].includes(cat) ? '' : 'none';
   }
   updatePricePreview();
 }
@@ -1744,6 +1779,14 @@ window.submitListing = async () => {
       document.getElementById('shop-prep-hours-wrap')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    if (avail === 'in_stock') {
+      const stockV = document.getElementById('sell-stock')?.value;
+      if (!stockV || Number(stockV) < 1) {
+        toast('Укажите количество в наличии (штук)', 'err');
+        document.getElementById('stock-field')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
   }
 
   const fd = new FormData();
@@ -1758,18 +1801,26 @@ window.submitListing = async () => {
   }
   fd.append('seller_name',     sellerName);
   fd.append('seller_phone',    phone);
-  fd.append('seller_telegram', document.getElementById('sell-tg').value.trim());
+  const tgVal = isShopUser
+    ? (document.getElementById('sell-shop-tg')?.value.trim() || '')
+    : (document.getElementById('sell-tg')?.value.trim() || '');
+  if (tgVal) fd.append('seller_telegram', tgVal);
   fd.append('address',         document.getElementById('sell-address').value.trim());
   fd.append('pickup_time',     document.getElementById('sell-time').value.trim());
   fd.append('gift_when',        giftWhen);
-  if (size) fd.append('size', size);
+  const shopSize = isShopUser ? (document.getElementById('sell-shop-size')?.value.trim() || '') : '';
+  const finalSize = isShopUser ? shopSize : size;
+  if (finalSize) fd.append('size', finalSize);
   const marketPrice = document.getElementById('sell-market-price')?.value;
   if (marketPrice) fd.append('market_price', marketPrice);
-  fd.append('stock',          document.getElementById('sell-stock')?.value || '');
   if (isShopUser) {
-    fd.append('availability_type', document.getElementById('sell-availability-type')?.value || 'in_stock');
+    const avail = document.getElementById('sell-availability-type')?.value || 'in_stock';
+    fd.append('availability_type', avail);
     const prep = document.getElementById('sell-prep-hours')?.value;
     if (prep) fd.append('prepare_hours', prep);
+    if (avail === 'in_stock') {
+      fd.append('stock', document.getElementById('sell-stock')?.value || '');
+    }
   }
   sellFiles.forEach(f => fd.append('photos', f));
   const tgId = getTelegramUserId();
@@ -1791,6 +1842,15 @@ window.submitListing = async () => {
     const sizeText = document.getElementById('sell-size-text'); if (sizeText) sizeText.value = '';
     document.querySelectorAll('#size-chips .chip').forEach(b => b.classList.remove('active'));
     const sf = document.getElementById('size-field'); if (sf) sf.style.display = 'none';
+    const shopTgEl = document.getElementById('sell-shop-tg'); if (shopTgEl) shopTgEl.value = '';
+    const shopSzText = document.getElementById('sell-shop-size-text'); if (shopSzText) shopSzText.value = '';
+    const shopSzHid = document.getElementById('sell-shop-size'); if (shopSzHid) shopSzHid.value = '';
+    document.querySelectorAll('#shop-size-chips-wrap .chip').forEach(b => b.classList.remove('active'));
+    const stockEl = document.getElementById('sell-stock'); if (stockEl) stockEl.value = '';
+    const prepEl = document.getElementById('sell-prep-hours'); if (prepEl) prepEl.value = '';
+    const availEl = document.getElementById('sell-availability-type'); if (availEl) availEl.value = 'in_stock';
+    document.querySelectorAll('#shop-avail-chips .chip').forEach((b,i) => b.classList.toggle('active', i===0));
+    const prepWrap = document.getElementById('shop-prep-hours-wrap'); if (prepWrap) prepWrap.style.display = 'none';
     sellFiles = []; renderSellPhotos();
     setTimeout(() => goPage('catalog'), 1600);
   } catch(e) { toast('Ошибка: '+e.message,'err'); }

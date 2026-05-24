@@ -158,7 +158,7 @@ exports.getProducts = async (req, res) => {
     if (listing_type === 'shop') {
       query = query.eq('listing_type', 'shop');
     } else if (listing_type === 'eco') {
-      query = query.or('listing_type.eq.eco,listing_type.is.null');
+      query = query.eq('listing_type', 'eco');
     }
 
     if (shop_phone) {
@@ -444,14 +444,10 @@ exports.createProduct = async (req, res) => {
       console.log('[createProduct] Warning: shop product without city, phone:', seller_phone);
     }
 
-    // Photo requirement: shops need 1+, eco listings need 3+
-    const minPhotos = listing_type === 'shop' ? 1 : 3;
+    // Photo requirement: minimum 3 for all listing types
+    const minPhotos = 3;
     if (files.length < minPhotos) {
-      return res.status(400).json({
-        error: listing_type === 'shop'
-          ? 'Загрузите минимум 1 фотографию'
-          : 'Загрузите минимум 3 фотографии'
-      });
+      return res.status(400).json({ error: 'Загрузите минимум 3 фотографии' });
     }
 
     const slug = await uniqueSlug(toSlug(title)).catch(() => `product-${Date.now()}`);
@@ -466,20 +462,22 @@ exports.createProduct = async (req, res) => {
           return res.status(400).json({ error: 'Укажите срок готовности в часах (для «на заказ»)' });
         }
       }
-      // Для сладостей время готовки обязательно (всегда на заказ)
-      if (category === 'sweets') {
-        if (!prepare_hours || Number(prepare_hours) < 1) {
-          return res.status(400).json({ error: 'Для сладостей укажите время готовки в часах' });
-        }
-        availType = 'on_order';
-        prepHrs = Number(prepare_hours);
-      }
     }
 
     const stockVal = stock_quantity ?? stock;
-    const stockQty = listing_type === 'shop'
-      ? (stockVal !== undefined && stockVal !== '' ? Number(stockVal) : 999999)
-      : 999999;
+    let stockQty = 999999;
+    if (listing_type === 'shop') {
+      if (availType === 'in_stock') {
+        const n = Number(stockVal);
+        if (!Number.isFinite(n) || n < 1) {
+          return res.status(400).json({ error: 'Укажите количество в наличии (штук)' });
+        }
+        stockQty = n;
+      } else {
+        // on_order — без ограничения по количеству
+        stockQty = 999999;
+      }
+    }
 
     // Сначала создаём объявление с пустыми фото — отвечаем клиенту быстро
     const { data, error } = await getClient()

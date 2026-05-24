@@ -88,7 +88,7 @@ exports.createOrder = async (req, res) => {
     if (productIds.length > 0) {
       const { data: prods } = await getClient()
         .from('products')
-        .select('id, seller_phone, title, price, commission_percent, pricing_mode, listing_type')
+        .select('id, seller_phone, title, price, commission_percent, pricing_mode, listing_type, stock_quantity, availability_type')
         .in('id', productIds);
       for (const p of (prods || [])) productById.set(p.id, p);
       const ecoItems = (prods || []).filter(p => {
@@ -100,6 +100,22 @@ exports.createOrder = async (req, res) => {
           error: 'В корзине есть эко-товары. Эко-товары заказываются через Telegram, а не через корзину.',
           eco_items: ecoItems.map(p => p.title)
         });
+      }
+      // Stock validation: ensure requested qty does not exceed available stock
+      for (const it of parsedItems) {
+        const pid = it.id || it.pub_id;
+        const prod = productById.get(pid);
+        if (!prod) continue;
+        if (prod.availability_type === 'on_order') continue;
+        const stock = Number(prod.stock_quantity);
+        if (!Number.isFinite(stock) || stock >= 999999) continue;
+        const wanted = Math.max(1, Number(it.qty || 1));
+        if (stock <= 0) {
+          return res.status(400).json({ error: `Товар «${prod.title}» закончился. Удалите его из корзины.` });
+        }
+        if (wanted > stock) {
+          return res.status(400).json({ error: `Недостаточно товара «${prod.title}» в наличии. Доступно: ${stock} шт.` });
+        }
       }
     }
 
@@ -225,6 +241,24 @@ exports.createOrder = async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    // Decrement stock_quantity for in_stock products (best-effort, non-blocking)
+    try {
+      for (const it of enrichedItems) {
+        const prod = productById.get(it.id);
+        if (!prod) continue;
+        if (prod.availability_type === 'on_order') continue;
+        const stock = Number(prod.stock_quantity);
+        if (!Number.isFinite(stock) || stock >= 999999) continue;
+        const newStock = Math.max(0, stock - Math.max(1, Number(it.qty || 1)));
+        await getClient()
+          .from('products')
+          .update({ stock_quantity: newStock })
+          .eq('id', it.id);
+      }
+    } catch (e) {
+      console.error('[createOrder] stock decrement error:', e.message);
+    }
 
     if (finalChatId || customerTelegram) {
       try {

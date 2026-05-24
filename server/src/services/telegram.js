@@ -1684,9 +1684,13 @@ async function notifyProduct(p) {
 
   let text;
   if (isShop) {
-    const avail = p.availability_type === 'on_order'
-      ? `⏳ На заказ${p.prepare_hours ? ` · ${p.prepare_hours} ч` : ''}`
-      : '✅ В наличии';
+    let avail;
+    if (p.availability_type === 'on_order') {
+      avail = `⏳ На заказ${p.prepare_hours ? ` · готовится ${p.prepare_hours} ч` : ''}`;
+    } else {
+      const sq = Number(p.stock_quantity);
+      avail = (sq && sq < 999999) ? `✅ В наличии: ${sq} шт` : '✅ В наличии';
+    }
     text =
       `🏪 <b>НОВАЯ ПУБЛИКАЦИЯ ОТ МАГАЗИНА</b>\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
@@ -1695,6 +1699,7 @@ async function notifyProduct(p) {
       `📞 <b>Телефон:</b> ${escHtml(p.seller_phone)}\n` +
       (p.seller_telegram ? `✈️ <b>Telegram:</b> ${escHtml(p.seller_telegram)}\n` : '') +
       `📍 <b>Город:</b> ${escHtml(p.city || '—')}\n` +
+      (p.size ? `📏 <b>Размер:</b> ${escHtml(p.size)}\n` : '') +
       `📦 <b>Наличие:</b> ${avail}\n\n` +
       `💰 <b>Цена для покупателя:</b> ${buyerPrice.toLocaleString('ru')} TJS\n` +
       `💵 <b>Доля магазина:</b> ${sellerPayout.toLocaleString('ru')} TJS\n` +

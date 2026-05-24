@@ -570,7 +570,7 @@ nav {
   background: #fff; border: 1.5px solid var(--border); border-radius: 22px;
   overflow: hidden; cursor: pointer;
   transition: transform .26s cubic-bezier(.22,1,.36,1), box-shadow .26s, border-color .26s;
-  position: relative; display: flex; flex-direction: column;
+  position: relative; display: flex; flex-direction: column; z-index: 0;
 }
 .p-card:hover { transform: translateY(-5px); box-shadow: 0 20px 56px rgba(0,0,0,.11); border-color: rgba(34,160,91,.25); }
 .pc-img-wrap { position: relative; height: 220px; flex-shrink: 0; overflow: hidden; }
@@ -627,7 +627,7 @@ nav {
 #pgrid .empty span { font-size: 3rem; }
 #pgrid .empty h3 { font-size: 1.15rem; color: var(--black); font-family: 'Outfit',sans-serif; }
 #pgrid .empty p { font-size: .88rem; }
-.pcard { background: #fff; border: 1.5px solid var(--border); border-radius: 22px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: transform .26s cubic-bezier(.22,1,.36,1), box-shadow .26s, border-color .26s; position: relative; }
+.pcard { background: #fff; border: 1.5px solid var(--border); border-radius: 22px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: transform .26s cubic-bezier(.22,1,.36,1), box-shadow .26s, border-color .26s; position: relative; z-index: 0; }
 .pcard:hover { transform: translateY(-5px); box-shadow: 0 20px 56px rgba(0,0,0,.11); border-color: rgba(34,160,91,.28); }
 .pcard-img-wrap { position: relative; height: 220px; flex-shrink: 0; overflow: hidden; }
 .pcard-img { display: flex; height: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scroll-behavior: smooth; scrollbar-width: none; background: linear-gradient(145deg,#f0faf5,#e8f5e9); }
@@ -1320,6 +1320,39 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <option>Регар</option><option>Бустон</option>
           </select>
         </div>
+        <div class="form-group fg-full" id="shop-availability-field" data-shop-only style="display:none">
+          <label>Статус товара *</label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="shop-avail-chips">
+            <button type="button" class="chip active" data-val="in_stock" onclick="selectShopAvail('in_stock',this)">✅ В наличии</button>
+            <button type="button" class="chip" data-val="on_order" onclick="selectShopAvail('on_order',this)">⏳ На заказ</button>
+          </div>
+          <input type="hidden" id="sell-availability-type" value="in_stock">
+          <div id="shop-prep-hours-wrap" style="display:none;margin-top:12px">
+            <label>Готовность (часов) *</label>
+            <input type="number" id="sell-prep-hours" placeholder="Например: 24" min="1" style="width:100%;max-width:200px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;margin-top:6px">
+            <p style="font-size:.78rem;color:var(--gray);margin-top:5px">Сколько часов нужно на приготовление</p>
+          </div>
+        </div>
+        <div class="form-group fg-full" id="stock-field" data-shop-only style="display:none">
+          <label>Количество в наличии (штук) *</label>
+          <input type="number" id="sell-stock" placeholder="Например: 5" min="1" style="width:100%;max-width:200px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;margin-top:6px">
+          <p style="font-size:.78rem;color:var(--gray);margin-top:5px">Сколько штук этого товара у вас в наличии. Покупатель не сможет заказать больше.</p>
+        </div>
+        <div class="form-group" id="shop-telegram-field" data-shop-only style="display:none">
+          <label>Telegram магазина <span style="color:var(--gray);font-weight:400">(необязательно)</span></label>
+          <input type="text" id="sell-shop-tg" placeholder="@username">
+        </div>
+        <div class="form-group fg-full" id="shop-size-field" data-shop-only style="display:none">
+          <label>Размер <span style="color:var(--gray);font-weight:400">(необязательно)</span></label>
+          <div id="shop-size-chips-wrap" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+            <button type="button" class="chip" onclick="selectShopSize('Маленький',this)">🟢 Маленький</button>
+            <button type="button" class="chip" onclick="selectShopSize('Средний',this)">🟡 Средний</button>
+            <button type="button" class="chip" onclick="selectShopSize('Большой',this)">🔴 Большой</button>
+          </div>
+          <input type="text" id="sell-shop-size-text" placeholder="Или введите свой размер (например: 60 см)" style="width:100%;margin-top:8px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;box-sizing:border-box" oninput="updateShopSizeInput()">
+          <input type="hidden" id="sell-shop-size">
+          <p style="font-size:.78rem;color:var(--gray);margin-top:5px">Выберите из списка или введите произвольный размер</p>
+        </div>
         <div class="form-group fg-full" id="sell-contact-box" style="background:var(--warm);border-radius:16px;padding:18px;border:1.5px solid var(--border)">
           <p style="font-weight:700;margin-bottom:14px;color:var(--mid)" id="sell-contact-title">🔐 Ваши контакты (видит только администратор)</p>
           <div class="fgrid">
@@ -1328,21 +1361,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
             <div class="form-group" data-shop-hide><label>Telegram <span style="color:var(--gray);font-weight:400">(необязательно)</span></label><input type="text" id="sell-tg" placeholder="@username"></div>
             <div class="form-group" data-shop-hide><label>Адрес</label><input type="text" id="sell-address" placeholder="ул. Рудаки, 12"></div>
             <div class="form-group" data-shop-hide><label>Время получения</label><input type="text" id="sell-time" placeholder="09:00–21:00 ежедневно"></div>
-            <div class="form-group" id="market-price-field"><label>Цена в других магазинах <span style="color:var(--gray);font-weight:400">(необязательно)</span></label><input type="number" id="sell-market-price" placeholder="Например: 350" min="0"></div>
-            <div class="form-group" id="stock-field"><label>Количество в наличии <span style="color:var(--gray);font-weight:400">(для магазинов)</span></label><input type="number" id="sell-stock" placeholder="Например: 5" min="0"></div>
-            <div class="form-group fg-full" id="shop-availability-field" data-shop-only style="display:none">
-              <label>Статус товара *</label>
-              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" id="shop-avail-chips">
-                <button type="button" class="chip active" data-val="in_stock" onclick="selectShopAvail('in_stock',this)">✅ В наличии</button>
-                <button type="button" class="chip" data-val="on_order" onclick="selectShopAvail('on_order',this)">⏳ На заказ</button>
-              </div>
-              <input type="hidden" id="sell-availability-type" value="in_stock">
-              <div id="shop-prep-hours-wrap" style="display:none;margin-top:12px">
-                <label>Готовность (часов) *</label>
-                <input type="number" id="sell-prep-hours" placeholder="Например: 24" min="1" style="width:100%;max-width:200px;padding:10px 12px;border:1.5px solid var(--border);border-radius:9px;font-size:.95rem;margin-top:6px">
-                <p style="font-size:.78rem;color:var(--gray);margin-top:5px">Сколько часов нужно на приготовление</p>
-              </div>
-            </div>
+            <div class="form-group" id="market-price-field" data-shop-hide><label>Цена в других магазинах <span style="color:var(--gray);font-weight:400">(необязательно)</span></label><input type="number" id="sell-market-price" placeholder="Например: 350" min="0"></div>
             <div class="form-group fg-full" id="size-field" data-shop-hide>
               <label>Размер * <span style="color:var(--gray);font-weight:400">(обязательно)</span></label>
               <div id="size-chips-wrap" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
@@ -1378,7 +1397,7 @@ footer { background: var(--black); color: rgba(255,255,255,.45); text-align: cen
           <p style="font-size:.78rem;color:var(--gray);margin-top:12px">Покупатели увидят только кнопки Instagram и Telegram администратора. Ваши личные контакты защищены.</p>
         </div>
         <div class="form-group fg-full">
-          <label>Фотографии * <span style="color:var(--gray);font-weight:400">(минимум 3 фото)</span></label>
+          <label>Фотографии *</label>
           <label class="photo-area" for="sell-photos">
             <span class="icon">📸</span>
             <b>Нажмите для загрузки</b>
@@ -2300,6 +2319,11 @@ window.addToCart = (item) => {
   if (existingIdx >= 0) {
     toast('Уже в корзине — измените количество кнопками + и −', 'info');
     window.openCart?.();
+    return;
+  }
+  const stockQ = Number(item.stock_quantity);
+  if (Number.isFinite(stockQ) && stockQ < 999999 && stockQ <= 0) {
+    toast('Товар закончился', 'err');
     return;
   }
   item.id = itemId;
