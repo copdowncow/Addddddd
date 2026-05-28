@@ -223,6 +223,7 @@ async function removeExpiredProducts() {
       .from('products')
       .select('*')
       .in('category', ['bouquet', 'basket'])
+      .neq('listing_type', 'shop')
       .or(`expires_at.lt.${now},and(expires_at.is.null,created_at.lt.${twoDaysAgo})`);
     if (fetchErr) { console.log('Expire check error:', fetchErr.message); return; }
     if (expired?.length) {
@@ -249,7 +250,7 @@ async function start() {
     async (id) => {
       const { data: existing } = await getClient().from('products').select('*').eq('id', id).single();
       const updates = { status: 'active' };
-      if (existing && ['bouquet','basket'].includes(existing.category)) {
+      if (existing && ['bouquet','basket'].includes(existing.category) && existing.listing_type !== 'shop') {
         updates.expires_at = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
       }
       await getClient().from('products').update(updates).eq('id', id);

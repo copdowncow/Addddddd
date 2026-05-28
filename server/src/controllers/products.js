@@ -560,10 +560,11 @@ exports.adminList = async (req, res) => {
 
     if (error) throw error;
 
-    // Автоудаляем просроченные букеты и корзины
+    // Автоудаляем просроченные букеты и корзины (только eco, не shop)
     const now = new Date();
     const expired = (data || []).filter(p =>
       ['bouquet', 'basket'].includes(p.category) &&
+      p.listing_type !== 'shop' &&
       p.expires_at && new Date(p.expires_at) < now
     );
     if (expired.length) {
@@ -664,8 +665,8 @@ exports.adminUpdate = async (req, res) => {
 
     // ── Уведомляем продавца при смене статуса ──────────────
     if (updates.status === 'active' && existing.status !== 'active') {
-      // Букеты и корзины — срок 2 дня
-      if (['bouquet', 'basket'].includes(data.category)) {
+      // Букеты и корзины — срок 2 дня (только eco, не shop)
+      if (['bouquet', 'basket'].includes(data.category) && data.listing_type !== 'shop') {
         const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
         await getClient().from('products').update({ expires_at: expiresAt }).eq('id', data.id);
         data.expires_at = expiresAt;
